@@ -106,6 +106,7 @@ def train(args):
             )
     else:
         raise ValueError('Possible model_type are "Transformer" and "BLSTM"')
+    # TODO: add initialization for new model
 
     if args.gpu >= 0:
         gpuid = use_single_gpu()

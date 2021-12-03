@@ -512,6 +512,10 @@ class TransformerEDADiarization(chainer.Chain):
         # save as (n_layers, h, T, T)-shaped arryay
         np.save(ofile, np.array(att_weights))
 
+# TODO: create new model TransformerClusteringDiarization
+# TODO: implement function splitting wav files (wav to batch?)
+# TODO: implement new loss function
+# TODO: wtf is EDA ??
 
 class BLSTMDiarization(chainer.Chain):
 

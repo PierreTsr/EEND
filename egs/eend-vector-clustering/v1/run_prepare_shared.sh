@@ -89,7 +89,7 @@ if [ $stage -le 1 ]; then
 				[[ "${config[$i]}" =~ ([0-9]+)\ ([0-9]+)\ ([0-9]+)\ ([0-9]+)\ ([0-9]+) ]] &&
 					n_mixtures="${BASH_REMATCH[1]}" && min_utt_per_spk="${BASH_REMATCH[2]}" &&
 					max_utt_per_spk="${BASH_REMATCH[3]}" && beta="${BASH_REMATCH[4]}" && n_speakers="${BASH_REMATCH[5]}"
-				total_utterances=$((total_utterances + n_utterances))
+				total_utterances=$((total_utterances + n_mixtures))
 				src_dset="${dset}_clean"
 				simuid=${src_dset}_ns${n_speakers}_beta${beta}_${n_mixtures}
 				folders+=( $simudir/data/"$simuid" )
@@ -120,7 +120,7 @@ if [ $stage -le 1 ]; then
 					utils/split_scp.pl $simudir/.work/mixture_"$simuid".scp $split_scps || exit 1
 
 					$simu_cmd --max-jobs-run 32 JOB=1:$nj $simudir/.work/make_mixture_"$simuid".JOB.log \
-						$make_mixture_cmd --rate=16000 \
+						$make_mixture_cmd --rate=8000 \
 						$simudir/.work/mixture_"$simuid".JOB.scp \
 						$simudir/.work/data_"$simuid".JOB $simudir/wav/"$simuid"/JOB
 					utils/combine_data.sh $simudir/data/"$simuid" $simudir/.work/data_"$simuid".*
@@ -134,6 +134,9 @@ if [ $stage -le 1 ]; then
 		done <<<"$line"
 	done <conf/simulation.conf
 fi
+
+if [ $stage -le 2 ]; then
+
 
 # if [ $stage -le 2 ]; then
 #     for set in train dev test; do

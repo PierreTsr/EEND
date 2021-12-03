@@ -14,8 +14,8 @@ stage=0
 # The datasets for training must be formatted as kaldi data directory.
 # Also, make sure the audio files in wav.scp are 'regular' wav files.
 # Including piped commands in wav.scp makes training very slow
-train_set=data/simu/train_40000
-valid_set=data/simu/dev_4000
+train_set=data/simu/train_2000
+valid_set=data/simu/dev_200
 
 # Base config files for {train,infer}.py
 # train_config=conf/train.yaml

@@ -11,6 +11,8 @@ parser.add_argument('-c', '--config', help='config file path',
                     action=yamlargparse.ActionConfigFile)
 parser.add_argument('data_dir',
                     help='kaldi-style data dir')
+parser.add_argument('--train_dir',
+                    help='kaldi-style data dir used for training.')
 parser.add_argument('model_file',
                     help='best.nnet')
 parser.add_argument('out_dir',
@@ -29,6 +31,7 @@ parser.add_argument('--input-transform', default='',
                     choices=['', 'log', 'logmel',
                              'logmel23', 'logmel23_swn', 'logmel23_mn'],
                     help='input transform')
+parser.add_argument('--lambda-loss', default=0.01, type=float)
 parser.add_argument('--embedding-size', default=256, type=int)
 parser.add_argument('--embedding-layers', default=2, type=int)
 parser.add_argument('--chunk-size', default=2000, type=int,

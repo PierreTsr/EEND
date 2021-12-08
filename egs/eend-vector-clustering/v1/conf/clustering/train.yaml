@@ -2,13 +2,15 @@
 sampling_rate: 8000
 frame_size: 200
 frame_shift: 80
-model_type: Transformer
+model_type: TransformerClustering
 max_epochs: 10
 gradclip: 5
 batchsize: 64
 hidden_size: 256
 num_frames: 500
 num_speakers: 3
+embedding_size: 256
+lambda_loss: 0.01
 input_transform: logmel23_mn
 optimizer: noam
 context_size: 7

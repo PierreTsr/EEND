@@ -9,7 +9,7 @@
 # for real conversational speech, K. Kinoshita et al.
 #
 
-stage=0
+stage=3
 
 # The datasets for training must be formatted as kaldi data directory.
 # Also, make sure the audio files in wav.scp are 'regular' wav files.
@@ -18,11 +18,14 @@ train_set=data/simu/train_2000
 valid_set=data/simu/dev_200
 
 # Base config files for {train,infer}.py
-# train_config=conf/train.yaml
-# infer_config=conf/infer.yaml
+train_config=conf/clustering/train.yaml
+infer_config=conf/clustering/infer.yaml
 # If you want to use EDA-EEND, uncommend two lines below.
-train_config=conf/eda/train.yaml
-infer_config=conf/eda/infer.yaml
+# train_config=conf/eda/train.yaml
+# infer_config=conf/eda/infer.yaml
+
+#train_config=conf/train.yaml
+#infer_config=conf/infer.yaml
 
 # Additional arguments passed to {train,infer}.py.
 # You need not edit the base config files above
@@ -120,7 +123,8 @@ if [ $stage -le 3 ]; then
             infer.py \
             -c $infer_config \
             $infer_args \
-            data/simu/data/$dset \
+            $dset \
+            --train_dir $train_set \
             $model_dir/$ave_id.nnet.npz \
             $infer_dir/$dset \
             || exit 1
@@ -135,17 +139,17 @@ if [ $stage -le 4 ]; then
         echo " if you want to retry, please remove it."
         exit 1
     fi
-    for dset in $train_set $valid_set; do
+    for dset in $valid_set; do
         work=$scoring_dir/$dset/.work
-        mkdir -p $work
-        find $infer_dir/$dset -iname "*.h5" > $work/file_list_$dset
+        mkdir -p $work/$dset
+        find $infer_dir/$dset -iname "*.h5" > $work/"$dset"_file_list
         for med in 1 11; do
         for th in 0.3 0.4 0.5 0.6 0.7; do
         make_rttm.py --median=$med --threshold=$th \
             --frame_shift=$infer_frame_shift --subsampling=$infer_subsampling --sampling_rate=$infer_sampling_rate \
-            $work/file_list_$dset $scoring_dir/$dset/hyp_${th}_$med.rttm
+            $work/"$dset"_file_list $scoring_dir/$dset/hyp_${th}_$med.rttm
         md-eval.pl -c 0.25 \
-            -r data/simu/data/$dset/rttm \
+            -r $dset/rttm \
             -s $scoring_dir/$dset/hyp_${th}_$med.rttm > $scoring_dir/$dset/result_th${th}_med${med}_collar0.25 2>/dev/null || exit
         done
         done
@@ -153,7 +157,7 @@ if [ $stage -le 4 ]; then
 fi
 
 if [ $stage -le 5 ]; then
-    for dset in dev_clean_2_ns2_beta2_500; do
+    for dset in $valid_set ; do
         best_score.sh $scoring_dir/$dset
     done
 fi

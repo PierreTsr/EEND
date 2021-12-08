@@ -46,6 +46,8 @@ parser.add_argument('--label-delay', default=0, type=int,
                          ' for uni-directional rnn to see in the future')
 parser.add_argument('--hidden-size', default=256, type=int,
                     help='number of lstm output nodes')
+parser.add_argument('--embeddings-size', default=256, type=int)
+parser.add_argument('--lambda-loss', default=0.01, type=float)
 parser.add_argument('--num-lstm-layers', default=1, type=int,
                     help='number of lstm layers')
 parser.add_argument('--dc-loss-ratio', default=0.5, type=float)

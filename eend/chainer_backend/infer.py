@@ -7,11 +7,14 @@ import os
 import h5py
 import numpy as np
 import chainer
+import chainer.functions as F
 from chainer import Variable
 from chainer import serializers
 from scipy.ndimage import shift
 from eend.chainer_backend.models import BLSTMDiarization
-from eend.chainer_backend.models import TransformerDiarization, TransformerEDADiarization
+from eend.chainer_backend.models import TransformerDiarization, TransformerEDADiarization, \
+    TransformerClusteringDiarization
+from eend.chainer_backend.diarization_dataset import KaldiDiarizationDataset
 from eend.chainer_backend.utils import use_single_gpu
 from eend import feature
 from eend import kaldi_data
@@ -27,6 +30,10 @@ def _gen_chunk_indices(data_len, chunk_size):
         start += step
 
 
+def get_n_train_speakers(train_set):
+    return len(train_set.data.spk2utt)
+
+
 def infer(args):
     system_info.print_system_info()
 
@@ -35,6 +42,20 @@ def infer(args):
         args.frame_size,
         args.context_size,
         args.input_transform)
+
+    train_set = KaldiDiarizationDataset(
+        args.train_dir,
+        chunk_size=args.chunk_size,
+        context_size=args.context_size,
+        input_transform=args.input_transform,
+        frame_size=args.frame_size,
+        frame_shift=args.frame_shift,
+        subsampling=args.subsampling,
+        rate=args.sampling_rate,
+        use_last_samples=True,
+        n_speakers=args.num_speakers,
+        shuffle=args.shuffle,
+    )
 
     if args.model_type == "BLSTM":
         model = BLSTMDiarization(
@@ -65,6 +86,19 @@ def infer(args):
                 n_layers=args.transformer_encoder_n_layers,
                 dropout=0
             )
+    elif args.model_type == "TransformerClustering":
+        print("Using TransformerClustering")
+        model = TransformerClusteringDiarization(
+            n_speakers=args.num_speakers,
+            n_training_speakers=get_n_train_speakers(train_set),
+            emb_size=args.embedding_size,
+            in_size=in_size,
+            lambda_loss=args.lambda_loss,
+            n_units=args.hidden_size,
+            n_heads=args.transformer_encoder_n_heads,
+            n_layers=args.transformer_encoder_n_layers,
+            dropout=0
+        )
     else:
         raise ValueError('Unknown model type.')
 
@@ -92,11 +126,16 @@ def infer(args):
                     hs, [Y_chunked],
                     n_speakers=args.num_speakers,
                     th=args.attractor_threshold,
-                    shuffle=args.shuffle
+                    shuffle=args.shuffle,
+                    end_seq=len(Y) == end
                 )
-                if args.gpu >= 0:
-                    ys[0].to_cpu()
-                out_chunks.append(ys[0].data)
+                if isinstance(model, TransformerClusteringDiarization):
+                    if len(Y) == end:
+                        out_chunks += F.split_axis(ys, range(min(args.chunk_size, len(Y)), len(Y), args.chunk_size), axis=0)
+                else:
+                    if args.gpu >= 0:
+                        ys[0].to_cpu()
+                    out_chunks.append(ys[0].data)
                 if args.save_attention_weight == 1:
                     att_fname = f"{recid}_{start}_{end}.att.npy"
                     att_path = os.path.join(args.out_dir, att_fname)
@@ -104,10 +143,13 @@ def infer(args):
         outfname = recid + '.h5'
         outpath = os.path.join(args.out_dir, outfname)
         if hasattr(model, 'label_delay'):
-            outdata = shift(np.vstack(out_chunks), (-model.label_delay, 0))
+            outdata = shift(F.vstack(out_chunks), (-model.label_delay, 0))
+        elif isinstance(model, TransformerClusteringDiarization):
+            outdata = F.vstack(out_chunks)
         else:
             max_n_speakers = max([o.shape[1] for o in out_chunks])
-            out_chunks = [np.insert(o, o.shape[1], np.zeros((max_n_speakers - o.shape[1], o.shape[0])), axis=1) for o in out_chunks]
-            outdata = np.vstack(out_chunks)
+            out_chunks = [np.insert(o, o.shape[1], np.zeros((max_n_speakers - o.shape[1], o.shape[0])), axis=1) for o in
+                          out_chunks]
+            outdata = F.vstack(out_chunks)
         with h5py.File(outpath, 'w') as wf:
-            wf.create_dataset('T_hat', data=outdata)
+            wf.create_dataset('T_hat', data=outdata.array)

@@ -55,7 +55,7 @@ def load_wav_scp(wav_scp_file):
     return {x[0]: x[1] for x in lines}
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=512)
 def load_wav(wav_rxfilename, start=0, end=None):
     """ This function reads audio file and return data in numpy.float32 array.
         "lru_cache" holds recently loaded audio so that can be called

@@ -36,7 +36,7 @@ class KaldiDiarizationDataset(chainer.dataset.DatasetMixin):
             frame_size=1024,
             frame_shift=256,
             subsampling=1,
-            rate=16000,
+            rate=8000,
             input_transform=None,
             use_last_samples=False,
             label_delay=0,

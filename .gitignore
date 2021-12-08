@@ -116,3 +116,10 @@ venv.bak/
 
 # PyCharm config files
 .idea/
+
+# corpora
+*amicorpus/
+*simulated_rirs_8k/
+*musan/
+*LibriSpeech/
+*.tar.gz

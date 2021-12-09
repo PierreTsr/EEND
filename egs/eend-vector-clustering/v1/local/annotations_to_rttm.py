@@ -7,6 +7,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Convert CHIME-5 annotations to rttm annotations')
 parser.add_argument("-i", help="Input folder")
 parser.add_argument("-o", help="Output folder")
+parser.add_argument("--wav", help="path to the wav files")
 
 channels_id = {
     "CH1": "A",
@@ -20,6 +21,7 @@ channels_num = {
 
 def load_dataset(folder):
     data = []
+    print(folder)
     for filename in Path(folder).rglob('*.json'):
         with open(filename) as file:
             data += json.load(file)
@@ -65,6 +67,7 @@ def create_dataset(df):
         "BLANK3": pd.NA
     })
     annotations = annotations[["TYPE", "FILE", "CHANNEL", "ONSET", "DURATION", "BLANK1", "BLANK2", "SPEAKER", "BLANK3"]]
+    annotations = annotations[annotations["DURATION"] > 0].reset_index(drop=True)
     annotations = annotations.sort_values("ONSET")
     all_channels = []
     for filename in set(annotations.FILE.values):
@@ -109,19 +112,20 @@ def create_reco2file_and_channel(df, folder):
     tmp = tmp.drop_duplicates()
     tmp.to_csv(filename, sep="\t", na_rep="<NA>", header=False, index=False, quoting=csv.QUOTE_NONE)
 
-def create_wavscp(df, folder):
+def create_wavscp(df, folder, wav_folder):
     df = df.copy()
-    dset = folder.split("/")[-2]
+    dset = folder.split("/")[-1]
     filename = Path(folder) / "wav.scp"
+    wav_folder = str(Path(wav_folder).resolve())
     mono = df[df.FILE.apply(lambda f: "U" in f)]
     stereo = df[df.FILE.apply(lambda f: "P" in f)]
     tmp1 = pd.DataFrame({
         "RECO": mono.FILE.apply(lambda s: s.replace('.', '-').replace('_', '-')) + "-" + mono.CHANNEL,
-        "FILE": "/mnt/disk1/eend_workspace/EEND-Vector-Clustering/corpora/CHIME5/audio/" + dset + "/" + mono.FILE + ".wav",
+        "FILE":  wav_folder + "/" + mono.FILE + ".wav",
     })
     tmp2 = pd.DataFrame({
         "RECO": stereo.FILE.apply(lambda s: s.replace('.', '-').replace('_', '-')) + "-" + stereo.CHANNEL,
-        "FILE": "/usr/bin/sox /mnt/disk1/eend_workspace/EEND-Vector-Clustering/corpora/CHIME5/audio/" + dset + "/" + stereo.FILE + ".wav -t wav -r 16000 -b 16 -c 1 - remix " + stereo.CHANNEL.apply(lambda s: channels_num[s]) + " |"
+        "FILE": wav_folder + "/" + stereo.FILE + ".CH" + stereo.CHANNEL.apply(lambda s: channels_num[s]) + ".wav"
     })
     tmp = pd.concat((tmp1, tmp2))
     tmp = tmp.drop_duplicates()
@@ -134,4 +138,4 @@ if __name__=="__main__":
     df = create_dataset(df)
     create_rttm(df, args.o)
     create_reco2file_and_channel(df, args.o)
-    create_wavscp(df, args.o)
+    create_wavscp(df, args.o, args.wav)

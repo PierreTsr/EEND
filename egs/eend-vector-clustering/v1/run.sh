@@ -9,23 +9,23 @@
 # for real conversational speech, K. Kinoshita et al.
 #
 
-stage=3
+stage=0
 
 # The datasets for training must be formatted as kaldi data directory.
 # Also, make sure the audio files in wav.scp are 'regular' wav files.
 # Including piped commands in wav.scp makes training very slow
-train_set=data/simu/train_2000
-valid_set=data/simu/dev_200
+train_set=data/train_full
+valid_set=data/dev_full
 
 # Base config files for {train,infer}.py
 train_config=conf/clustering/train.yaml
 infer_config=conf/clustering/infer.yaml
 # If you want to use EDA-EEND, uncommend two lines below.
 # train_config=conf/eda/train.yaml
-# infer_config=conf/eda/infer.yaml
+# infer_config=conf/eda/infer.yaml
 
-#train_config=conf/train.yaml
-#infer_config=conf/infer.yaml
+# train_config=conf/train.yaml
+# infer_config=conf/infer.yaml
 
 # Additional arguments passed to {train,infer}.py.
 # You need not edit the base config files above

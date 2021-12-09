@@ -122,4 +122,5 @@ venv.bak/
 *simulated_rirs_8k/
 *musan/
 *LibriSpeech/
+*chime5/
 *.tar.gz

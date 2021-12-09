@@ -29,13 +29,13 @@ simu_opts_overlap=yes
 . cmd.sh
 . parse_options.sh || exit
 
-librispeech_dev=LibriSpeech/dev-clean/
-librispeech_test=LibriSpeech/test-clean/
-librispeech_train_100=LibriSpeech/train-clean-100/
-librispeech_train_360=LibriSpeech/train-clean-360/
-musan=musan/
+librispeech_dev=../../../../datasets/LibriSpeech/dev-clean/
+librispeech_test=../../../../datasets/LibriSpeech/test-clean/
+librispeech_train_100=../../../../datasets/LibriSpeech/train-clean-100/
+librispeech_train_360=../../../../datasets/LibriSpeech/train-clean-360/
+musan=../../../../datasets/musan/
 sim_rir_8k=simulated_rirs_8k/
-chime5=../../../../corpora/CHIME5
+chime5=../../../../datasets/CHiME5
 
 if [ $stage -le 0 ]; then
 	if [ ! -d $librispeech_dev ]; then
@@ -58,7 +58,7 @@ if [ $stage -le 0 ]; then
 		sim_rir_8k=simulated_rirs_8k
 	fi
 
-	if [ ! -d $CHIME5 ]; then
+	if [ ! -d $chime5 ]; then
 		echo "$0 unable to find CHIME5 directory" && exit
 	fi
 fi
@@ -94,6 +94,11 @@ if [ $stage -le 1 ]; then
 		awk '{print $1, $1}' data/sim_rir_8k/wav.scp >data/sim_rir_8k/utt2spk
 		utils/fix_data_dir.sh data/sim_rir_8k
 		touch data/sim_rir_8k/.done
+	fi
+	if [ ! -f data/chime5/.done ]; then
+		local/collect_chime5.sh "$chime5" data
+		mv data/chime5/eval data/chime5/test
+		touch data/chime5/.done
 	fi
 fi
 
@@ -159,6 +164,9 @@ if [ $stage -le 2 ]; then
 				fi
 			done
 			utils/data/combine_data.sh data/simu/"$dset"_"$total_utterances" "${folders[@]}"
+			utils/data/combine_data.sh data/"$dset"_full data/simu/"$dset"_"$total_utterances" data/chime5/"$dset"
+			utils/data/get_reco2dur.sh data/"$dset"_full
+			validate_data_dir.sh --no-text --no-feats  data/"$dset"_full
 		done <<<"$line"
 	done <conf/simulation.conf
 fi

@@ -256,6 +256,8 @@ def get_labeledSTFT(
          in filtered_segments]).tolist()
     if n_speakers is None:
         n_speakers = len(speakers)
+    elif len(speakers) > n_speakers:
+        speakers = speakers[:n_speakers]
     T = np.zeros((Y.shape[0], n_speakers), dtype=np.int32)
 
     if use_speaker_id:

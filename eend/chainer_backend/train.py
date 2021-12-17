@@ -12,7 +12,7 @@ from chainer import iterators
 from chainer import training
 from chainer.training import extensions
 from eend.chainer_backend.models import BLSTMDiarization
-from eend.chainer_backend.models import TransformerDiarization, TransformerEDADiarization
+from eend.chainer_backend.models import TransformerDiarization, TransformerEDADiarization, TransformerClusteringDiarization
 from eend.chainer_backend.transformer import NoamScheduler
 from eend.chainer_backend.updater import GradientAccumulationUpdater
 from eend.chainer_backend.diarization_dataset import KaldiDiarizationDataset
@@ -29,6 +29,19 @@ def _convert(batch, device):
     return {'xs': to_device_batch([x for x, _ in batch]),
             'ts': to_device_batch([t for _, t in batch])}
 
+
+# pht2119
+def get_n_train_speakers(train_set):
+    """
+    Compute the number of speakers in a training set.
+
+    Args:
+        train_set: KaldiDiarizationDataset, the training set
+
+    Returns:
+    int, the number of speakers in the dataset
+    """
+    return len(train_set.data.spk2utt)
 
 def train(args):
     """ Training model with chainer backend.
@@ -104,6 +117,22 @@ def train(args):
                 n_layers=args.transformer_encoder_n_layers,
                 dropout=args.transformer_encoder_dropout
             )
+
+    # pht2119
+    # model creation
+    elif args.model_type == "TransformerClustering":
+        print("Using TransformerClustering")
+        model = TransformerClusteringDiarization(
+            n_speakers=args.num_speakers,
+            n_training_speakers=get_n_train_speakers(train_set),
+            emb_size=args.embeddings_size,
+            in_size=Y.shape[1],
+            lambda_loss=args.lambda_loss,
+            n_units=args.hidden_size,
+            n_heads=args.transformer_encoder_n_heads,
+            n_layers=args.transformer_encoder_n_layers,
+            dropout=args.transformer_encoder_dropout
+        )
     else:
         raise ValueError('Possible model_type are "Transformer" and "BLSTM"')
 

@@ -2,9 +2,11 @@
 # Licensed under the MIT license.
 
 import numpy as np
+import cupy
 import chainer
 import chainer.functions as F
 import chainer.links as L
+from sklearn.cluster import AgglomerativeClustering
 from itertools import permutations
 from chainer import cuda
 from chainer import reporter
@@ -140,7 +142,7 @@ def standard_loss(ys, ts, label_delay=0):
     return loss
 
 
-def batch_pit_n_speaker_loss(ys, ts, n_speakers_list):
+def batch_pit_n_speaker_loss(ys, ts, n_speakers_list, return_perm=False):
     """
     PIT loss over mini-batch.
     Args:
@@ -196,6 +198,7 @@ def batch_pit_n_speaker_loss(ys, ts, n_speakers_list):
         return [
             [x[:num] for x in perms].index(perm)
             for perm in sub_perms]
+
     masks = xp.full_like(losses_perm.array, xp.inf)
     for i, t in enumerate(ts):
         n_speakers = n_speakers_list[i]
@@ -208,9 +211,12 @@ def batch_pit_n_speaker_loss(ys, ts, n_speakers_list):
     min_loss = min_loss / n_frames
 
     min_indices = xp.argmin(losses_perm.array, axis=1)
+    min_perms = F.stack([perms[idx] for idx in min_indices])
     labels_perm = [t[:, perms[idx]] for t, idx in zip(ts, min_indices)]
     labels_perm = [t[:, :n_speakers] for t, n_speakers in zip(labels_perm, n_speakers_list)]
 
+    if return_perm:
+        return min_loss, labels_perm, min_perms
     return min_loss, labels_perm
 
 
@@ -252,7 +258,8 @@ def pad_results(ys, out_size):
     for i, y in enumerate(ys):
         if y.shape[1] < out_size:
             # padding
-            ys_padded.append(F.concat([y, chainer.Variable(xp.zeros((y.shape[0], out_size - y.shape[1]), dtype=y.dtype))], axis=1))
+            ys_padded.append(
+                F.concat([y, chainer.Variable(xp.zeros((y.shape[0], out_size - y.shape[1]), dtype=y.dtype))], axis=1))
         elif y.shape[1] > out_size:
             # truncate
             raise ValueError
@@ -296,7 +303,7 @@ def calc_diarization_error(pred, label, label_delay=0):
     res['speaker_error'] = xp.sum(xp.minimum(n_ref, n_sys) - n_map)
     res['correct'] = xp.sum(label == decisions) / label.shape[1]
     res['diarization_error'] = (
-        res['speaker_miss'] + res['speaker_falarm'] + res['speaker_error'])
+            res['speaker_miss'] + res['speaker_falarm'] + res['speaker_error'])
     res['frames'] = len(label)
     return res
 
@@ -328,15 +335,93 @@ def dc_loss(embedding, label):
       between embedding and label affinity matrices
     """
     xp = cuda.get_array_module(label)
-    b = xp.zeros((label.shape[0], 2**label.shape[1]))
+    b = xp.zeros((label.shape[0], 2 ** label.shape[1]))
     b[np.arange(label.shape[0]),
       [int(''.join(str(x) for x in t), base=2) for t in label.data]] = 1
 
     label_f = chainer.Variable(b.astype(np.float32))
     loss = F.sum(F.square(F.matmul(embedding, embedding, True, False))) \
-        + F.sum(F.square(F.matmul(label_f, label_f, True, False))) \
-        - 2 * F.sum(F.square(F.matmul(embedding, label_f, True, False)))
+           + F.sum(F.square(F.matmul(label_f, label_f, True, False))) \
+           - 2 * F.sum(F.square(F.matmul(embedding, label_f, True, False)))
     return loss
+
+# pht2119
+def speaker_embedding_loss(embeddings, ref_embeddings, speaker_perm, alpha, beta):
+    """
+    Compute the embedding loss for the EEND vector clustering framework.
+
+    Args:
+        embeddings: (Batch, S_local, emb_size)-shaped matrix with the predicted embeddings
+        ref_embeddings: a (1, S_total, emb_size)-shaped embedding matrix for all the training speakers
+        speaker_perm: (Batch, S_local) matrix with the speaker permutation for each chunk
+        alpha: Float, see paper for details
+        beta: Float, see paper for details
+
+    Returns:
+        (1,)-shaped embedding loss for the batch
+    """
+    # embeddings: (B, Sl, E)
+    # ref_embeddings: (1, S, E)
+    # speake_perm: (B, Sl)
+    ref_embeddings = F.expand_dims(ref_embeddings, axis=0)
+
+    # differences: (B, Sl, S, E)
+    differences = F.expand_dims(embeddings, axis=2) - F.expand_dims(ref_embeddings, axis=1)
+    distance_shape = differences.shape[:3]
+    # distances: (B, Sl, S)
+    distances = F.reshape(F.batch_l2_norm_squared(F.reshape(differences, (-1, differences.shape[-1]))), distance_shape)
+    distances = alpha * distances + beta
+
+    # loss: (B, Sl, S)
+    loss = - F.log_softmax(distances, axis=-1)
+    loss = F.mean(F.select_item(loss.reshape((speaker_perm.size, -1)), F.flatten(speaker_perm)))
+
+    return loss
+
+
+# pht2119
+def clusterize_predict(activation, embeddings):
+    """
+    Return the global speaker labels from a sequence of local labels.
+
+    Args:
+        activation: list of (Chunk_length, S_local)-shaped matrices with the local predictions
+        embeddings: (Batch, S_local, emb_size)-shaped matrix with the speakers embeddings of the whole sequence
+
+    Returns:
+        (Total_length, S_total)-shaped matrix with the global predictions
+    """
+    batch_size, n_speaker, emb_size = embeddings.shape
+    # embeddings: (B * S, E)
+    embeddings = embeddings.reshape((batch_size * n_speaker, emb_size))
+
+    # differences: (B * S, B * S, E)
+    differences = F.expand_dims(embeddings, axis=1) - F.expand_dims(embeddings, axis=0)
+    distance_shape = differences.shape[:2]
+    # distances: (B * S, B * S)
+    distances = F.reshape(F.batch_l2_norm_squared(F.reshape(differences, (-1, emb_size))), distance_shape)
+
+    max_dist = 2*F.max(distances)
+    # distances: (B, S, B, S)
+    distances = distances.reshape((batch_size, n_speaker, batch_size, n_speaker))
+    xp = chainer.backend.get_array_module(distances)
+    do_not_link = F.expand_dims(F.expand_dims(chainer.Variable(xp.diag(xp.ones((batch_size,), dtype="float32"))) * max_dist, axis=1), axis=3)
+    # distances: (B * S, B * S)
+    distances = (distances + do_not_link).reshape(distance_shape)
+
+    clustering = AgglomerativeClustering(n_clusters=None,
+                                         affinity="precomputed",
+                                         linkage="complete",
+                                         distance_threshold=max_dist.item())
+    # labels: (B, S)
+    labels = clustering.fit_predict(distances.array.get()).reshape((batch_size, n_speaker))
+    n_tot_speakers = np.max(labels) + 1
+    tot_length = sum(len(y) for y in activation)
+    predictions = np.zeros((tot_length, n_tot_speakers), dtype="float32")
+    for i, y in enumerate(activation):
+        offset = len(activation[0]) * i
+        predictions[offset:(offset + len(y)), labels[i]] = y.array.get()
+    return predictions
 
 
 class TransformerDiarization(chainer.Chain):
@@ -505,6 +590,143 @@ class TransformerEDADiarization(chainer.Chain):
         att_weights = []
         for l in range(self.enc.n_layers):
             att_layer = getattr(self.enc, f'self_att_{l}')
+            # att.shape is (B, h, T, T); pick the first sample in batch
+            att_w = att_layer.att[batch_index, ...]
+            att_w.to_cpu()
+            att_weights.append(att_w.data)
+        # save as (n_layers, h, T, T)-shaped arryay
+        np.save(ofile, np.array(att_weights))
+        
+
+# pht2119
+class TransformerClusteringTrainingHead(chainer.Link):
+
+    def __init__(self,
+                 n_training_speakers,
+                 emb_size):
+        """
+        Sub-module of the TransformerClusteringDiarization class, used to compute the embedding loss during training.
+
+        Args:
+            n_training_speakers: int, value for S_total
+            emb_size: int, speaker embedding dimension
+        """
+        super(TransformerClusteringTrainingHead, self).__init__()
+        with self.init_scope():
+            self.training_emb = chainer.Parameter(chainer.initializers.GlorotUniform(),
+                                                  shape=(n_training_speakers, emb_size))
+            self.alpha = chainer.Parameter(1, shape=())
+            self.beta = chainer.Parameter(0, shape=())
+
+    def forward(self, embeddings, permutation):
+        training_emb = F.normalize(self.training_emb, axis=1)
+        embeddings_loss = speaker_embedding_loss(embeddings, training_emb, permutation, self.alpha, self.beta)
+        return embeddings_loss
+
+
+class TransformerClusteringDiarization(chainer.Chain):
+
+    def __init__(self,
+                 n_speakers,
+                 n_training_speakers,
+                 emb_size,
+                 in_size,
+                 n_units,
+                 n_heads,
+                 n_layers,
+                 dropout,
+                 lambda_loss):
+        """
+        The EEND vector clustering model, as described in K. Kinoshita's paper.
+
+        Args:
+            n_speakers: int, value for S_local
+            n_training_speakers: int, value for S_total
+            emb_size: int, speaker embedding dimension
+            in_size: int, input feature dimension
+            n_units: int, Transformer's hidden dimension
+            n_heads: int, number of attention heads in the Transformers
+            n_layers: int, number of Transformer layers
+            dropout: float, value for the Transformer dropout
+            lambda_loss: float, value to compose the total loss
+        """
+        super(TransformerClusteringDiarization, self).__init__()
+        with self.init_scope():
+            self.encoder = TransformerEncoder(
+                in_size, n_layers, n_units, h=n_heads, dropout=dropout)
+            self.linear_diarization = L.Linear(n_units, n_speakers)
+            self.linear_embedding = L.Linear(n_units, emb_size * n_speakers)
+            self.training_head = TransformerClusteringTrainingHead(n_training_speakers,
+                                                                   emb_size)
+            self.n_speakers = n_speakers
+            self.lambda_loss = lambda_loss
+
+    def forward(self, xs):
+        ilens = [x.shape[0] for x in xs]
+        xs = F.pad_sequence(xs, padding=-1)
+        pad_shape = xs.shape
+        # encodings: (B*T, X)
+        encodings = self.encoder(xs)
+
+        # activations: (B*T, S)
+        activations = self.linear_diarization(encodings)
+        # activations: (B, T, S)
+        activations = activations.reshape(pad_shape[0], pad_shape[1], -1)
+
+        # Creating mask for embedding's computation
+        xp = chainer.backend.get_array_module(activations)
+        mask = np.ones(activations.shape, dtype=np.float32)
+        for i, length in enumerate(ilens):
+            mask[i, length:, :] = 0.0
+        mask = chainer.Variable(xp.array(mask))
+
+        # embeddings: (B*T, E*S)
+        embeddings = self.linear_embedding(encodings)
+        # embeddings: (B, T, S, E)
+        embeddings = embeddings.reshape((*pad_shape[:-1], self.n_speakers, -1))
+        # embeddings: (B, S, E)
+        embeddings = F.sum(F.expand_dims(F.sigmoid(activations), axis=-1) * F.expand_dims(mask, axis=-1) * embeddings, axis=1)
+        embeddings = F.normalize(embeddings, axis=-1)
+
+        ys = F.separate(activations, axis=0)
+        ys = [F.get_item(y, slice(0, ilen)) for y, ilen in zip(ys, ilens)]
+        return ys, embeddings
+
+    def __call__(self, xs, ts):
+        ys, embeddings = self.forward(xs)
+        # loss, labels = batch_pit_loss_faster(ys, ts)
+        n_speakers = [t.shape[1] for t in ts]
+        diarization_loss, labels, perm = batch_pit_n_speaker_loss(ys, ts, n_speakers, return_perm=True)
+
+        embeddings_loss = self.training_head.forward(embeddings, perm)
+        loss = (1 - self.lambda_loss) * diarization_loss + self.lambda_loss * embeddings_loss
+        reporter.report({'diarization_loss': diarization_loss,
+                         'embeddings_loss': embeddings_loss,
+                         'loss': loss
+                         }, self)
+        report_diarization_error(ys, labels, self)
+
+        return loss
+
+    def estimate_sequential(self, hx, xs, **kwargs):
+        activation, embeddings = self.forward(xs)
+        activation = [F.sigmoid(y) for y in activation]
+        if hx is not None:
+            prev_activation, prev_embeddings = hx
+            activation = prev_activation + activation
+            embeddings = F.concat((prev_embeddings, embeddings), axis=0)
+
+        if kwargs.get("end_seq"):
+            ys = clusterize_predict(activation, embeddings)
+        else:
+            ys = None
+
+        return (activation, embeddings), ys
+    
+    def save_attention_weight(self, ofile, batch_index=0):
+        att_weights = []
+        for l in range(self.encoder.n_layers):
+            att_layer = getattr(self.encoder, f'self_att_{l}')
             # att.shape is (B, h, T, T); pick the first sample in batch
             att_w = att_layer.att[batch_index, ...]
             att_w.to_cpu()

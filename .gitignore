@@ -124,3 +124,4 @@ venv.bak/
 *LibriSpeech/
 *chime5/
 *.tar.gz
+*.tar

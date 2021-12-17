@@ -133,6 +133,7 @@ def infer(args):
                     end_seq=len(Y) == end
                 )
                 # pht2119
+                # fixed the post-processing for the new framework
                 if isinstance(model, TransformerClusteringDiarization):
                     if len(Y) == end:
                         out_chunks += F.split_axis(ys, range(min(args.chunk_size, len(Y)), len(Y), args.chunk_size), axis=0)
@@ -147,6 +148,7 @@ def infer(args):
         outfname = recid + '.h5'
         outpath = os.path.join(args.out_dir, outfname)
         # pht2119
+        # fixed the post-processing for the new framework
         if hasattr(model, 'label_delay'):
             outdata = shift(F.vstack(out_chunks), (-model.label_delay, 0))
         elif isinstance(model, TransformerClusteringDiarization):

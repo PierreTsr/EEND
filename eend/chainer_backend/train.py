@@ -32,6 +32,15 @@ def _convert(batch, device):
 
 # pht2119
 def get_n_train_speakers(train_set):
+    """
+    Compute the number of speakers in a training set.
+
+    Args:
+        train_set: KaldiDiarizationDataset, the training set
+
+    Returns:
+    int, the number of speakers in the dataset
+    """
     return len(train_set.data.spk2utt)
 
 def train(args):
@@ -110,6 +119,7 @@ def train(args):
             )
 
     # pht2119
+    # model creation
     elif args.model_type == "TransformerClustering":
         print("Using TransformerClustering")
         model = TransformerClusteringDiarization(

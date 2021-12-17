@@ -19,7 +19,7 @@ stage=3
 # Including piped commands in wav.scp makes training very slow
 train_set=data/simu/train_20000
 dev_set=data/simu/dev_1000
-test_set=data/chime5/dev
+test_set=data/simu/test_200
 
 # Base config files for {train,infer}.py
 train_config=conf/clustering/train.yaml

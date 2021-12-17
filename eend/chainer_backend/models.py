@@ -347,6 +347,19 @@ def dc_loss(embedding, label):
 
 # pht2119
 def speaker_embedding_loss(embeddings, ref_embeddings, speaker_perm, alpha, beta):
+    """
+    Compute the embedding loss for the EEND vector clustering framework.
+
+    Args:
+        embeddings: (Batch, S_local, emb_size)-shaped matrix with the predicted embeddings
+        ref_embeddings: a (1, S_total, emb_size)-shaped embedding matrix for all the training speakers
+        speaker_perm: (Batch, S_local) matrix with the speaker permutation for each chunk
+        alpha: Float, see paper for details
+        beta: Float, see paper for details
+
+    Returns:
+        (1,)-shaped embedding loss for the batch
+    """
     # embeddings: (B, Sl, E)
     # ref_embeddings: (1, S, E)
     # speake_perm: (B, Sl)
@@ -368,6 +381,16 @@ def speaker_embedding_loss(embeddings, ref_embeddings, speaker_perm, alpha, beta
 
 # pht2119
 def clusterize_predict(activation, embeddings):
+    """
+    Return the global speaker labels from a sequence of local labels.
+
+    Args:
+        activation: list of (Chunk_length, S_local)-shaped matrices with the local predictions
+        embeddings: (Batch, S_local, emb_size)-shaped matrix with the speakers embeddings of the whole sequence
+
+    Returns:
+        (Total_length, S_total)-shaped matrix with the global predictions
+    """
     batch_size, n_speaker, emb_size = embeddings.shape
     # embeddings: (B * S, E)
     embeddings = embeddings.reshape((batch_size * n_speaker, emb_size))
@@ -581,6 +604,13 @@ class TransformerClusteringTrainingHead(chainer.Link):
     def __init__(self,
                  n_training_speakers,
                  emb_size):
+        """
+        Sub-module of the TransformerClusteringDiarization class, used to compute the embedding loss during training.
+
+        Args:
+            n_training_speakers: int, value for S_total
+            emb_size: int, speaker embedding dimension
+        """
         super(TransformerClusteringTrainingHead, self).__init__()
         with self.init_scope():
             self.training_emb = chainer.Parameter(chainer.initializers.GlorotUniform(),
@@ -606,6 +636,20 @@ class TransformerClusteringDiarization(chainer.Chain):
                  n_layers,
                  dropout,
                  lambda_loss):
+        """
+        The EEND vector clustering model, as described in K. Kinoshita's paper.
+
+        Args:
+            n_speakers: int, value for S_local
+            n_training_speakers: int, value for S_total
+            emb_size: int, speaker embedding dimension
+            in_size: int, input feature dimension
+            n_units: int, Transformer's hidden dimension
+            n_heads: int, number of attention heads in the Transformers
+            n_layers: int, number of Transformer layers
+            dropout: float, value for the Transformer dropout
+            lambda_loss: float, value to compose the total loss
+        """
         super(TransformerClusteringDiarization, self).__init__()
         with self.init_scope():
             self.encoder = TransformerEncoder(

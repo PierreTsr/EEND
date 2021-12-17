@@ -43,6 +43,8 @@ def get_args():
 
     return args
 
+# pht2119
+# fixed some errors in the function. They were making some incorrect assumtptions about the recording IDs.
 def main():
     args = get_args()
 

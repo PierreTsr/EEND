@@ -9,6 +9,9 @@
 # for real conversational speech, K. Kinoshita et al.
 #
 
+# pht2119
+# I adapted this script for my own configuration
+# changed a few naming conventions, fixed a few issues but didn't make any major change
 stage=3
 
 # The datasets for training must be formatted as kaldi data directory.

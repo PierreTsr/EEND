@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# pht2119
+# Script made entirely by myself to download and pre-process the AMI dataset
 
 stage=1
 

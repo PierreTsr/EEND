@@ -345,7 +345,7 @@ def dc_loss(embedding, label):
            - 2 * F.sum(F.square(F.matmul(embedding, label_f, True, False)))
     return loss
 
-
+# pht2119
 def speaker_embedding_loss(embeddings, ref_embeddings, speaker_perm, alpha, beta):
     # embeddings: (B, Sl, E)
     # ref_embeddings: (1, S, E)
@@ -366,6 +366,7 @@ def speaker_embedding_loss(embeddings, ref_embeddings, speaker_perm, alpha, beta
     return loss
 
 
+# pht2119
 def clusterize_predict(activation, embeddings):
     batch_size, n_speaker, emb_size = embeddings.shape
     # embeddings: (B * S, E)
@@ -572,14 +573,9 @@ class TransformerEDADiarization(chainer.Chain):
             att_weights.append(att_w.data)
         # save as (n_layers, h, T, T)-shaped arryay
         np.save(ofile, np.array(att_weights))
+        
 
-
-# TODO: create new model TransformerClusteringDiarization
-# TODO: implement function splitting wav files (wav to batch?)
-# TODO: implement new loss function
-# TODO: wtf is EDA ??
-
-
+# pht2119
 class TransformerClusteringTrainingHead(chainer.Link):
 
     def __init__(self,

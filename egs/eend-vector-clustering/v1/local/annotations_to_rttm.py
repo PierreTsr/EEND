@@ -1,3 +1,5 @@
+# pht2119
+# Script made entirely by myself to convert the CHiME5 annotations to the rttm format
 import pandas as pd
 import json
 import csv

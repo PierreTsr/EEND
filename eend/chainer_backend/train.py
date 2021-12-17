@@ -30,6 +30,7 @@ def _convert(batch, device):
             'ts': to_device_batch([t for _, t in batch])}
 
 
+# pht2119
 def get_n_train_speakers(train_set):
     return len(train_set.data.spk2utt)
 
@@ -107,6 +108,8 @@ def train(args):
                 n_layers=args.transformer_encoder_n_layers,
                 dropout=args.transformer_encoder_dropout
             )
+
+    # pht2119
     elif args.model_type == "TransformerClustering":
         print("Using TransformerClustering")
         model = TransformerClusteringDiarization(
@@ -122,7 +125,6 @@ def train(args):
         )
     else:
         raise ValueError('Possible model_type are "Transformer" and "BLSTM"')
-    # TODO: add initialization for new model
 
     if args.gpu >= 0:
         gpuid = use_single_gpu()

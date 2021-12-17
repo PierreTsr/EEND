@@ -15,6 +15,11 @@
 # This script does NOT include the composition of train/valid/test sets.
 # The composition will be done at stage 1 of ./run.sh
 
+
+# pht2119
+# I made some major changes in this script. I recommend using git or comparing with the version provided by Hitachi for more details
+# I adapted this code for new datasets, made it possible to specify multiple simulation configurations in conf/simulation.conf
+# I also merged the final dataset with CHiME5's training set.
 stage=0
 
 # This script distributes simulated data under these directories
@@ -29,6 +34,7 @@ simu_opts_overlap=yes
 . cmd.sh
 . parse_options.sh || exit
 
+# Corpora paths
 librispeech_dev=../../../../datasets/LibriSpeech/dev-clean/
 librispeech_test=../../../../datasets/LibriSpeech/test-clean/
 librispeech_train_100=../../../../datasets/LibriSpeech/train-clean-100/

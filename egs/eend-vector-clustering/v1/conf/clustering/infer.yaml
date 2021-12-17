@@ -1,4 +1,5 @@
 # inference options
+# pht2119
 sampling_rate: 8000
 frame_size: 200
 frame_shift: 80

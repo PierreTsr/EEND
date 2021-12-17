@@ -30,6 +30,7 @@ def _gen_chunk_indices(data_len, chunk_size):
         start += step
 
 
+# pht2119
 def get_n_train_speakers(train_set):
     return len(train_set.data.spk2utt)
 
@@ -43,6 +44,7 @@ def infer(args):
         args.context_size,
         args.input_transform)
 
+    # pht2119
     train_set = KaldiDiarizationDataset(
         args.train_dir,
         chunk_size=args.chunk_size,
@@ -86,6 +88,7 @@ def infer(args):
                 n_layers=args.transformer_encoder_n_layers,
                 dropout=0
             )
+    # pht2119
     elif args.model_type == "TransformerClustering":
         print("Using TransformerClustering")
         model = TransformerClusteringDiarization(
@@ -129,6 +132,7 @@ def infer(args):
                     shuffle=args.shuffle,
                     end_seq=len(Y) == end
                 )
+                # pht2119
                 if isinstance(model, TransformerClusteringDiarization):
                     if len(Y) == end:
                         out_chunks += F.split_axis(ys, range(min(args.chunk_size, len(Y)), len(Y), args.chunk_size), axis=0)
@@ -142,6 +146,7 @@ def infer(args):
                     model.save_attention_weight(att_path)
         outfname = recid + '.h5'
         outpath = os.path.join(args.out_dir, outfname)
+        # pht2119
         if hasattr(model, 'label_delay'):
             outdata = shift(F.vstack(out_chunks), (-model.label_delay, 0))
         elif isinstance(model, TransformerClusteringDiarization):

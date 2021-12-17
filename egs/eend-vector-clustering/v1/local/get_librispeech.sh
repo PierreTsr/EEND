@@ -1,4 +1,6 @@
 #!/bin/bash
+# pht2119
+# Script to download LibriSpeech
 
 wget https://us.openslr.org/resources/12/dev-clean.tar.gz
 wget https://us.openslr.org/resources/12/test-clean.tar.gz

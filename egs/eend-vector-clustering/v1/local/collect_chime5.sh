@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-
+# pht2119
+# Script made entirely by myself to pre-process the CHiME5 dataset
 
 CHIME5=$1
 data=$2

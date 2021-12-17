@@ -1,4 +1,6 @@
 #!/bin/sh
+# pht2119
+# Script provided by AMI official website to download their corpus
 wget    -P amicorpus/ES2002a/audio https://groups.inf.ed.ac.uk/ami/AMICorpusMirror//amicorpus/ES2002a/audio/ES2002a.Mix-Headset.wav
 wget    -P amicorpus/ES2002b/audio https://groups.inf.ed.ac.uk/ami/AMICorpusMirror//amicorpus/ES2002b/audio/ES2002b.Mix-Headset.wav
 wget    -P amicorpus/ES2002c/audio https://groups.inf.ed.ac.uk/ami/AMICorpusMirror//amicorpus/ES2002c/audio/ES2002c.Mix-Headset.wav
@@ -169,5 +171,3 @@ wget    -P amicorpus/IN1012/audio https://groups.inf.ed.ac.uk/ami/AMICorpusMirro
 wget    -P amicorpus/IN1013/audio https://groups.inf.ed.ac.uk/ami/AMICorpusMirror//amicorpus/IN1013/audio/IN1013.Mix-Headset.wav
 wget    -P amicorpus/IN1014/audio https://groups.inf.ed.ac.uk/ami/AMICorpusMirror//amicorpus/IN1014/audio/IN1014.Mix-Headset.wav
 wget    -P amicorpus/IN1016/audio https://groups.inf.ed.ac.uk/ami/AMICorpusMirror//amicorpus/IN1016/audio/IN1016.Mix-Headset.wav
-wget https://groups.inf.ed.ac.uk/ami/download/temp/amiBuild-52432-Wed-Dec-8-2021.manifest.txt
-wget https://groups.inf.ed.ac.uk/ami/download/temp/../CCBY4.0.txt

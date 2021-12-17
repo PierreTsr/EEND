@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-stage=2
+stage=1
 
 if [ $stage -le 0 ]; then
     local/get_amicorpus.sh
@@ -9,10 +9,21 @@ if [ $stage -le 0 ]; then
 fi
 
 if [ $stage -le 1 ]; then
-    tar -xf ami_annoations.tar -C amicorpus/
+    for folder in amicorpus/*; do
+        filename=$(basename "$folder").Mix-Headset.wav
+        file="$folder"/audio/"$filename"
+        tmp="$folder"/audio/tmp.wav
+        sox "$file" -v 0.98 -r 8000 "$tmp" remix 1
+        rm "$file"
+        mv "$tmp" "$file"
+    done
 fi
 
 if [ $stage -le 2 ]; then
+    tar -xf ami_annoations.tar -C amicorpus/
+fi
+
+if [ $stage -le 3 ]; then
     rm -rf data/ami
     mkdir -p data/ami
     touch data/ami/wav.scp

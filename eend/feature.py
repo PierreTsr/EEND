@@ -265,10 +265,7 @@ def get_labeledSTFT(
         S = np.zeros((Y.shape[0], len(all_speakers)), dtype=np.int32)
 
     for seg in filtered_segments:
-        try:
-            speaker_index = speakers.index(kaldi_obj.utt2spk[seg['utt']])
-        except ValueError:
-            speaker_index = 0
+        speaker_index = speakers.index(kaldi_obj.utt2spk[seg['utt']])
         if use_speaker_id:
             all_speaker_index = all_speakers.index(kaldi_obj.utt2spk[seg['utt']])
         start_frame = np.rint(

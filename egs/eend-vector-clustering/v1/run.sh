@@ -9,13 +9,14 @@
 # for real conversational speech, K. Kinoshita et al.
 #
 
-stage=0
+stage=3
 
 # The datasets for training must be formatted as kaldi data directory.
 # Also, make sure the audio files in wav.scp are 'regular' wav files.
 # Including piped commands in wav.scp makes training very slow
-train_set=data/train_full
-valid_set=data/dev_full
+train_set=data/simu/train_20000
+dev_set=data/simu/dev_1000
+test_set=data/chime5/dev
 
 # Base config files for {train,infer}.py
 train_config=conf/clustering/train.yaml
@@ -33,8 +34,8 @@ train_args=
 infer_args=
 
 # Model averaging options
-average_start=8
-average_end=10
+average_start=58
+average_end=60
 
 # Resume training from snapshot at this epoch
 # TODO: not tested
@@ -60,15 +61,16 @@ fi
 
 # Build directry names for an experiment
 #  - Training
-#     exp/diarize/model/{train_id}.{valid_id}.{train_config_id}
+#     exp/diarize/model/{train_id}.{dev_id}.{train_config_id}
 #  - Decoding
-#     exp/diarize/infer/{train_id}.{valid_id}.{train_config_id}.{infer_config_id}
+#     exp/diarize/infer/{train_id}.{dev_id}.{train_config_id}.{infer_config_id}
 #  - Scoring
-#     exp/diarize/scoring/{train_id}.{valid_id}.{train_config_id}.{infer_config_id}
+#     exp/diarize/scoring/{train_id}.{dev_id}.{train_config_id}.{infer_config_id}
 #  - Adapation from non-adapted averaged model
-#     exp/diarize/model/{train_id}.{valid_id}.{train_config_id}.{avgid}.{adapt_config_id}
+#     exp/diarize/model/{train_id}.{dev_id}.{train_config_id}.{avgid}.{adapt_config_id}
 train_id=$(basename $train_set)
-valid_id=$(basename $valid_set)
+dev_id=$(basename $dev_set)
+test_id=$(basename $test_set)
 train_config_id=$(echo $train_config | sed -e 's%conf/%%' -e 's%/%_%' -e 's%\.yaml$%%')
 infer_config_id=$(echo $infer_config | sed -e 's%conf/%%' -e 's%/%_%' -e 's%\.yaml$%%')
 
@@ -76,7 +78,7 @@ infer_config_id=$(echo $infer_config | sed -e 's%conf/%%' -e 's%/%_%' -e 's%\.ya
 train_config_id+=$(echo $train_args | sed -e 's/\-\-/_/g' -e 's/=//g' -e 's/ \+//g')
 infer_config_id+=$(echo $infer_args | sed -e 's/\-\-/_/g' -e 's/=//g' -e 's/ \+//g')
 
-model_id=$train_id.$valid_id.$train_config_id
+model_id=$train_id.$dev_id.$train_config_id
 model_dir=exp/diarize/model/$model_id
 if [ $stage -le 1 ]; then
     echo "training model at $model_dir."
@@ -92,7 +94,7 @@ if [ $stage -le 1 ]; then
             train.py \
             -c $train_config \
             $train_args \
-            $train_set $valid_set $model_dir \
+            $train_set $dev_set $model_dir \
             || exit 1
 fi
 
@@ -111,12 +113,12 @@ fi
 infer_dir=exp/diarize/infer/$model_id.$ave_id.$infer_config_id
 if [ $stage -le 3 ]; then
     echo "inference at $infer_dir"
-    if [ -d $infer_dir ]; then
-        echo "$infer_dir already exists. "
+    if [ -d $infer_dir/$test_set ]; then
+        echo "$infer_dir/$test_set already exists. "
         echo " if you want to retry, please remove it."
         exit 1
     fi
-    for dset in $train_set $valid_set; do
+    for dset in $test_set; do
         work=$infer_dir/$dset/.work
         mkdir -p $work
         $infer_cmd $work/infer.log \
@@ -134,12 +136,15 @@ fi
 scoring_dir=exp/diarize/scoring/$model_id.$ave_id.$infer_config_id
 if [ $stage -le 4 ]; then
     echo "scoring at $scoring_dir"
-    if [ -d $scoring_dir ]; then
-        echo "$scoring_dir already exists. "
+    if [ -d $scoring_dir/$test_set ]; then
+        echo "$scoring_dir/$test_set already exists. "
         echo " if you want to retry, please remove it."
         exit 1
     fi
-    for dset in $valid_set; do
+    for dset in $test_set; do
+        if [ ! -f $dset/rttm ]; then
+            steps/segmentation/convert_utt2spk_and_segments_to_rttm.py $dset/utt2spk $dset/segments $dset/rttm
+        fi
         work=$scoring_dir/$dset/.work
         mkdir -p $work/$dset
         find $infer_dir/$dset -iname "*.h5" > $work/"$dset"_file_list
@@ -157,7 +162,7 @@ if [ $stage -le 4 ]; then
 fi
 
 if [ $stage -le 5 ]; then
-    for dset in $valid_set ; do
+    for dset in $test_set; do
         best_score.sh $scoring_dir/$dset
     done
 fi

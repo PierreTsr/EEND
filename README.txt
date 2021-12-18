@@ -23,7 +23,7 @@ I also provided a quick explanation of my contributions when needed. When none i
 
 Requirements:
 
-- Python 3.7 and building the project environement (see instructions below)
+- Python 3.7 and building the project environement (see instructions below) => Done
 - activating the Python environement
 - optional: downloading (LibriSpeech + MUSAN + sim_rir_8k) and/or AMI and/or CHiME5, to use other data than the provided sample
 
@@ -34,17 +34,19 @@ Executables to test the code:
 
 Instructions:
 
-I will do my possible to setup the environement myself, but I might not be able to do it if I need to install additional packages.
-From the project root, run:
-$ cd tools
-$ make KALDI=<path_to_kaldi_root>
-Warning: the Makefile WILL try to build kaldi if the path to Kaldi's root is not provided.
-Warning: If the Makefile doesn't end with 
-"echo "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> env.sh"
-(it doesn't always raise an error when failing), delete the created files in tools/ and rerun after fixing the failing part.
+I successfully setup the environement, so please skip the commented lines.
+# I will do my possible to setup the environement myself, but I might not be able to do it if I need to install additional packages.
+# From the project root, run:
+# $ cd tools
+# $ make KALDI=<path_to_kaldi_root>
+# Warning: the Makefile WILL try to build kaldi if the path to Kaldi's root is not provided.
+# Warning: If the Makefile doesn't end with 
+# "echo "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> env.sh"
+# (it doesn't always raise an error when failing), delete the created files in tools/ and rerun after fixing the failing part.
 
 Activate the Python environement from the project root with:
 $ source tools/miniconda3/bin/activate eend
+(I couldn't use the 'source' command during my tests, but the project was working without activating the environement)
 
 Once the setup is done, to run the inference, from egs/eend-vector-clustering/v1/ run:
 $ ./run.sh

@@ -1,0 +1,863 @@
+diff -ru old/EEND/eend/bin/infer.py EEND/eend/bin/infer.py
+--- old/EEND/eend/bin/infer.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/bin/infer.py	2021-12-17 20:21:58.189669583 -0500
+@@ -29,6 +29,7 @@
+                     choices=['', 'log', 'logmel',
+                              'logmel23', 'logmel23_swn', 'logmel23_mn'],
+                     help='input transform')
++parser.add_argument('--lambda-loss', default=0.01, type=float)
+ parser.add_argument('--embedding-size', default=256, type=int)
+ parser.add_argument('--embedding-layers', default=2, type=int)
+ parser.add_argument('--chunk-size', default=2000, type=int,
+diff -ru old/EEND/eend/bin/train.py EEND/eend/bin/train.py
+--- old/EEND/eend/bin/train.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/bin/train.py	2021-12-17 20:19:25.114341965 -0500
+@@ -46,6 +46,8 @@
+                          ' for uni-directional rnn to see in the future')
+ parser.add_argument('--hidden-size', default=256, type=int,
+                     help='number of lstm output nodes')
++parser.add_argument('--embeddings-size', default=256, type=int)
++parser.add_argument('--lambda-loss', default=0.01, type=float)
+ parser.add_argument('--num-lstm-layers', default=1, type=int,
+                     help='number of lstm layers')
+ parser.add_argument('--dc-loss-ratio', default=0.5, type=float)
+diff -ru old/EEND/eend/chainer_backend/diarization_dataset.py EEND/eend/chainer_backend/diarization_dataset.py
+--- old/EEND/eend/chainer_backend/diarization_dataset.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/chainer_backend/diarization_dataset.py	2021-12-17 20:19:25.114341965 -0500
+@@ -36,7 +36,7 @@
+             frame_size=1024,
+             frame_shift=256,
+             subsampling=1,
+-            rate=16000,
++            rate=8000,
+             input_transform=None,
+             use_last_samples=False,
+             label_delay=0,
+diff -ru old/EEND/eend/chainer_backend/infer.py EEND/eend/chainer_backend/infer.py
+--- old/EEND/eend/chainer_backend/infer.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/chainer_backend/infer.py	2021-12-17 20:21:58.189669583 -0500
+@@ -7,11 +7,14 @@
+ import h5py
+ import numpy as np
+ import chainer
++import chainer.functions as F
+ from chainer import Variable
+ from chainer import serializers
+ from scipy.ndimage import shift
+ from eend.chainer_backend.models import BLSTMDiarization
+-from eend.chainer_backend.models import TransformerDiarization, TransformerEDADiarization
++from eend.chainer_backend.models import TransformerDiarization, TransformerEDADiarization, \
++    TransformerClusteringDiarization
++from eend.chainer_backend.diarization_dataset import KaldiDiarizationDataset
+ from eend.chainer_backend.utils import use_single_gpu
+ from eend import feature
+ from eend import kaldi_data
+@@ -27,6 +30,13 @@
+         start += step
+ 
+ 
++# pht2119
++# return the number of speakers during training
++def get_n_train_speakers(model_file):
++    training_embeddings = np.load(model_file)["training_head/training_emb"]
++    return training_embeddings.shape[0]
++
++
+ def infer(args):
+     system_info.print_system_info()
+ 
+@@ -65,11 +75,26 @@
+                 n_layers=args.transformer_encoder_n_layers,
+                 dropout=0
+             )
++    # pht2119
++    elif args.model_type == "TransformerClustering":
++        print("Using TransformerClustering")
++        model = TransformerClusteringDiarization(
++            n_speakers=args.num_speakers,
++            n_training_speakers=get_n_train_speakers(args.model_file),
++            emb_size=args.embedding_size,
++            in_size=in_size,
++            lambda_loss=args.lambda_loss,
++            n_units=args.hidden_size,
++            n_heads=args.transformer_encoder_n_heads,
++            n_layers=args.transformer_encoder_n_layers,
++            dropout=0
++        )
+     else:
+         raise ValueError('Unknown model type.')
+ 
+     serializers.load_npz(args.model_file, model)
+ 
++    print(args)
+     if args.gpu >= 0:
+         gpuid = use_single_gpu()
+         model.to_gpu()
+@@ -92,22 +117,34 @@
+                     hs, [Y_chunked],
+                     n_speakers=args.num_speakers,
+                     th=args.attractor_threshold,
+-                    shuffle=args.shuffle
++                    shuffle=args.shuffle,
++                    end_seq=len(Y) == end
+                 )
+-                if args.gpu >= 0:
+-                    ys[0].to_cpu()
+-                out_chunks.append(ys[0].data)
++                # pht2119
++                # fixed the post-processing for the new framework
++                if isinstance(model, TransformerClusteringDiarization):
++                    if len(Y) == end:
++                        out_chunks += F.split_axis(ys, range(min(args.chunk_size, len(Y)), len(Y), args.chunk_size), axis=0)
++                else:
++                    if args.gpu >= 0:
++                        ys[0].to_cpu()
++                    out_chunks.append(ys[0].data)
+                 if args.save_attention_weight == 1:
+                     att_fname = f"{recid}_{start}_{end}.att.npy"
+                     att_path = os.path.join(args.out_dir, att_fname)
+                     model.save_attention_weight(att_path)
+         outfname = recid + '.h5'
+         outpath = os.path.join(args.out_dir, outfname)
++        # pht2119
++        # fixed the post-processing for the new framework
+         if hasattr(model, 'label_delay'):
+-            outdata = shift(np.vstack(out_chunks), (-model.label_delay, 0))
++            outdata = shift(F.vstack(out_chunks), (-model.label_delay, 0))
++        elif isinstance(model, TransformerClusteringDiarization):
++            outdata = F.vstack(out_chunks)
+         else:
+             max_n_speakers = max([o.shape[1] for o in out_chunks])
+-            out_chunks = [np.insert(o, o.shape[1], np.zeros((max_n_speakers - o.shape[1], o.shape[0])), axis=1) for o in out_chunks]
+-            outdata = np.vstack(out_chunks)
++            out_chunks = [np.insert(o, o.shape[1], np.zeros((max_n_speakers - o.shape[1], o.shape[0])), axis=1) for o in
++                          out_chunks]
++            outdata = F.vstack(out_chunks)
+         with h5py.File(outpath, 'w') as wf:
+-            wf.create_dataset('T_hat', data=outdata)
++            wf.create_dataset('T_hat', data=outdata.array)
+diff -ru old/EEND/eend/chainer_backend/models.py EEND/eend/chainer_backend/models.py
+--- old/EEND/eend/chainer_backend/models.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/chainer_backend/models.py	2021-12-17 20:21:58.189669583 -0500
+@@ -5,6 +5,7 @@
+ import chainer
+ import chainer.functions as F
+ import chainer.links as L
++from sklearn.cluster import AgglomerativeClustering
+ from itertools import permutations
+ from chainer import cuda
+ from chainer import reporter
+@@ -140,7 +141,7 @@
+     return loss
+ 
+ 
+-def batch_pit_n_speaker_loss(ys, ts, n_speakers_list):
++def batch_pit_n_speaker_loss(ys, ts, n_speakers_list, return_perm=False):
+     """
+     PIT loss over mini-batch.
+     Args:
+@@ -196,6 +197,7 @@
+         return [
+             [x[:num] for x in perms].index(perm)
+             for perm in sub_perms]
++
+     masks = xp.full_like(losses_perm.array, xp.inf)
+     for i, t in enumerate(ts):
+         n_speakers = n_speakers_list[i]
+@@ -208,9 +210,12 @@
+     min_loss = min_loss / n_frames
+ 
+     min_indices = xp.argmin(losses_perm.array, axis=1)
++    min_perms = F.stack([perms[idx] for idx in min_indices])
+     labels_perm = [t[:, perms[idx]] for t, idx in zip(ts, min_indices)]
+     labels_perm = [t[:, :n_speakers] for t, n_speakers in zip(labels_perm, n_speakers_list)]
+ 
++    if return_perm:
++        return min_loss, labels_perm, min_perms
+     return min_loss, labels_perm
+ 
+ 
+@@ -252,7 +257,8 @@
+     for i, y in enumerate(ys):
+         if y.shape[1] < out_size:
+             # padding
+-            ys_padded.append(F.concat([y, chainer.Variable(xp.zeros((y.shape[0], out_size - y.shape[1]), dtype=y.dtype))], axis=1))
++            ys_padded.append(
++                F.concat([y, chainer.Variable(xp.zeros((y.shape[0], out_size - y.shape[1]), dtype=y.dtype))], axis=1))
+         elif y.shape[1] > out_size:
+             # truncate
+             raise ValueError
+@@ -296,7 +302,7 @@
+     res['speaker_error'] = xp.sum(xp.minimum(n_ref, n_sys) - n_map)
+     res['correct'] = xp.sum(label == decisions) / label.shape[1]
+     res['diarization_error'] = (
+-        res['speaker_miss'] + res['speaker_falarm'] + res['speaker_error'])
++            res['speaker_miss'] + res['speaker_falarm'] + res['speaker_error'])
+     res['frames'] = len(label)
+     return res
+ 
+@@ -328,16 +334,94 @@
+       between embedding and label affinity matrices
+     """
+     xp = cuda.get_array_module(label)
+-    b = xp.zeros((label.shape[0], 2**label.shape[1]))
++    b = xp.zeros((label.shape[0], 2 ** label.shape[1]))
+     b[np.arange(label.shape[0]),
+       [int(''.join(str(x) for x in t), base=2) for t in label.data]] = 1
+ 
+     label_f = chainer.Variable(b.astype(np.float32))
+     loss = F.sum(F.square(F.matmul(embedding, embedding, True, False))) \
+-        + F.sum(F.square(F.matmul(label_f, label_f, True, False))) \
+-        - 2 * F.sum(F.square(F.matmul(embedding, label_f, True, False)))
++           + F.sum(F.square(F.matmul(label_f, label_f, True, False))) \
++           - 2 * F.sum(F.square(F.matmul(embedding, label_f, True, False)))
+     return loss
+ 
++# pht2119
++def speaker_embedding_loss(embeddings, ref_embeddings, speaker_perm, alpha, beta):
++    """
++    Compute the embedding loss for the EEND vector clustering framework.
++
++    Args:
++        embeddings: (Batch, S_local, emb_size)-shaped matrix with the predicted embeddings
++        ref_embeddings: a (1, S_total, emb_size)-shaped embedding matrix for all the training speakers
++        speaker_perm: (Batch, S_local) matrix with the speaker permutation for each chunk
++        alpha: Float, see paper for details
++        beta: Float, see paper for details
++
++    Returns:
++        (1,)-shaped embedding loss for the batch
++    """
++    # embeddings: (B, Sl, E)
++    # ref_embeddings: (1, S, E)
++    # speake_perm: (B, Sl)
++    ref_embeddings = F.expand_dims(ref_embeddings, axis=0)
++
++    # differences: (B, Sl, S, E)
++    differences = F.expand_dims(embeddings, axis=2) - F.expand_dims(ref_embeddings, axis=1)
++    distance_shape = differences.shape[:3]
++    # distances: (B, Sl, S)
++    distances = F.reshape(F.batch_l2_norm_squared(F.reshape(differences, (-1, differences.shape[-1]))), distance_shape)
++    distances = alpha * distances + beta
++
++    # loss: (B, Sl, S)
++    loss = - F.log_softmax(distances, axis=-1)
++    loss = F.mean(F.select_item(loss.reshape((speaker_perm.size, -1)), F.flatten(speaker_perm)))
++
++    return loss
++
++
++# pht2119
++def clusterize_predict(activation, embeddings):
++    """
++    Return the global speaker labels from a sequence of local labels.
++
++    Args:
++        activation: list of (Chunk_length, S_local)-shaped matrices with the local predictions
++        embeddings: (Batch, S_local, emb_size)-shaped matrix with the speakers embeddings of the whole sequence
++
++    Returns:
++        (Total_length, S_total)-shaped matrix with the global predictions
++    """
++    batch_size, n_speaker, emb_size = embeddings.shape
++    # embeddings: (B * S, E)
++    embeddings = embeddings.reshape((batch_size * n_speaker, emb_size))
++
++    # differences: (B * S, B * S, E)
++    differences = F.expand_dims(embeddings, axis=1) - F.expand_dims(embeddings, axis=0)
++    distance_shape = differences.shape[:2]
++    # distances: (B * S, B * S)
++    distances = F.reshape(F.batch_l2_norm_squared(F.reshape(differences, (-1, emb_size))), distance_shape)
++
++    max_dist = 2*F.max(distances)
++    # distances: (B, S, B, S)
++    distances = distances.reshape((batch_size, n_speaker, batch_size, n_speaker))
++    xp = chainer.backend.get_array_module(distances)
++    do_not_link = F.expand_dims(F.expand_dims(chainer.Variable(xp.diag(xp.ones((batch_size,), dtype="float32"))) * max_dist, axis=1), axis=3)
++    # distances: (B * S, B * S)
++    distances = (distances + do_not_link).reshape(distance_shape)
++
++    clustering = AgglomerativeClustering(n_clusters=None,
++                                         affinity="precomputed",
++                                         linkage="complete",
++                                         distance_threshold=max_dist.item())
++    # labels: (B, S)
++    labels = clustering.fit_predict(distances.array).reshape((batch_size, n_speaker))
++    n_tot_speakers = np.max(labels) + 1
++    tot_length = sum(len(y) for y in activation)
++    predictions = np.zeros((tot_length, n_tot_speakers), dtype="float32")
++    for i, y in enumerate(activation):
++        offset = len(activation[0]) * i
++        predictions[offset:(offset + len(y)), labels[i]] = y.array
++    return predictions
++
+ 
+ class TransformerDiarization(chainer.Chain):
+ 
+@@ -508,6 +592,143 @@
+             # att.shape is (B, h, T, T); pick the first sample in batch
+             att_w = att_layer.att[batch_index, ...]
+             att_w.to_cpu()
++            att_weights.append(att_w.data)
++        # save as (n_layers, h, T, T)-shaped arryay
++        np.save(ofile, np.array(att_weights))
++        
++
++# pht2119
++class TransformerClusteringTrainingHead(chainer.Link):
++
++    def __init__(self,
++                 n_training_speakers,
++                 emb_size):
++        """
++        Sub-module of the TransformerClusteringDiarization class, used to compute the embedding loss during training.
++
++        Args:
++            n_training_speakers: int, value for S_total
++            emb_size: int, speaker embedding dimension
++        """
++        super(TransformerClusteringTrainingHead, self).__init__()
++        with self.init_scope():
++            self.training_emb = chainer.Parameter(chainer.initializers.GlorotUniform(),
++                                                  shape=(n_training_speakers, emb_size))
++            self.alpha = chainer.Parameter(1, shape=())
++            self.beta = chainer.Parameter(0, shape=())
++
++    def forward(self, embeddings, permutation):
++        training_emb = F.normalize(self.training_emb, axis=1)
++        embeddings_loss = speaker_embedding_loss(embeddings, training_emb, permutation, self.alpha, self.beta)
++        return embeddings_loss
++
++
++class TransformerClusteringDiarization(chainer.Chain):
++
++    def __init__(self,
++                 n_speakers,
++                 n_training_speakers,
++                 emb_size,
++                 in_size,
++                 n_units,
++                 n_heads,
++                 n_layers,
++                 dropout,
++                 lambda_loss):
++        """
++        The EEND vector clustering model, as described in K. Kinoshita's paper.
++
++        Args:
++            n_speakers: int, value for S_local
++            n_training_speakers: int, value for S_total
++            emb_size: int, speaker embedding dimension
++            in_size: int, input feature dimension
++            n_units: int, Transformer's hidden dimension
++            n_heads: int, number of attention heads in the Transformers
++            n_layers: int, number of Transformer layers
++            dropout: float, value for the Transformer dropout
++            lambda_loss: float, value to compose the total loss
++        """
++        super(TransformerClusteringDiarization, self).__init__()
++        with self.init_scope():
++            self.encoder = TransformerEncoder(
++                in_size, n_layers, n_units, h=n_heads, dropout=dropout)
++            self.linear_diarization = L.Linear(n_units, n_speakers)
++            self.linear_embedding = L.Linear(n_units, emb_size * n_speakers)
++            self.training_head = TransformerClusteringTrainingHead(n_training_speakers,
++                                                                   emb_size)
++            self.n_speakers = n_speakers
++            self.lambda_loss = lambda_loss
++
++    def forward(self, xs):
++        ilens = [x.shape[0] for x in xs]
++        xs = F.pad_sequence(xs, padding=-1)
++        pad_shape = xs.shape
++        # encodings: (B*T, X)
++        encodings = self.encoder(xs)
++
++        # activations: (B*T, S)
++        activations = self.linear_diarization(encodings)
++        # activations: (B, T, S)
++        activations = activations.reshape(pad_shape[0], pad_shape[1], -1)
++
++        # Creating mask for embedding's computation
++        xp = chainer.backend.get_array_module(activations)
++        mask = np.ones(activations.shape, dtype=np.float32)
++        for i, length in enumerate(ilens):
++            mask[i, length:, :] = 0.0
++        mask = chainer.Variable(xp.array(mask))
++
++        # embeddings: (B*T, E*S)
++        embeddings = self.linear_embedding(encodings)
++        # embeddings: (B, T, S, E)
++        embeddings = embeddings.reshape((*pad_shape[:-1], self.n_speakers, -1))
++        # embeddings: (B, S, E)
++        embeddings = F.sum(F.expand_dims(F.sigmoid(activations), axis=-1) * F.expand_dims(mask, axis=-1) * embeddings, axis=1)
++        embeddings = F.normalize(embeddings, axis=-1)
++
++        ys = F.separate(activations, axis=0)
++        ys = [F.get_item(y, slice(0, ilen)) for y, ilen in zip(ys, ilens)]
++        return ys, embeddings
++
++    def __call__(self, xs, ts):
++        ys, embeddings = self.forward(xs)
++        # loss, labels = batch_pit_loss_faster(ys, ts)
++        n_speakers = [t.shape[1] for t in ts]
++        diarization_loss, labels, perm = batch_pit_n_speaker_loss(ys, ts, n_speakers, return_perm=True)
++
++        embeddings_loss = self.training_head.forward(embeddings, perm)
++        loss = (1 - self.lambda_loss) * diarization_loss + self.lambda_loss * embeddings_loss
++        reporter.report({'diarization_loss': diarization_loss,
++                         'embeddings_loss': embeddings_loss,
++                         'loss': loss
++                         }, self)
++        report_diarization_error(ys, labels, self)
++
++        return loss
++
++    def estimate_sequential(self, hx, xs, **kwargs):
++        activation, embeddings = self.forward(xs)
++        activation = [F.sigmoid(y) for y in activation]
++        if hx is not None:
++            prev_activation, prev_embeddings = hx
++            activation = prev_activation + activation
++            embeddings = F.concat((prev_embeddings, embeddings), axis=0)
++
++        if kwargs.get("end_seq"):
++            ys = clusterize_predict(activation, embeddings)
++        else:
++            ys = None
++
++        return (activation, embeddings), ys
++    
++    def save_attention_weight(self, ofile, batch_index=0):
++        att_weights = []
++        for l in range(self.encoder.n_layers):
++            att_layer = getattr(self.encoder, f'self_att_{l}')
++            # att.shape is (B, h, T, T); pick the first sample in batch
++            att_w = att_layer.att[batch_index, ...]
++            att_w.to_cpu()
+             att_weights.append(att_w.data)
+         # save as (n_layers, h, T, T)-shaped arryay
+         np.save(ofile, np.array(att_weights))
+Only in EEND/eend/chainer_backend: __pycache__
+diff -ru old/EEND/eend/chainer_backend/train.py EEND/eend/chainer_backend/train.py
+--- old/EEND/eend/chainer_backend/train.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/chainer_backend/train.py	2021-12-17 20:19:25.114341965 -0500
+@@ -12,7 +12,7 @@
+ from chainer import training
+ from chainer.training import extensions
+ from eend.chainer_backend.models import BLSTMDiarization
+-from eend.chainer_backend.models import TransformerDiarization, TransformerEDADiarization
++from eend.chainer_backend.models import TransformerDiarization, TransformerEDADiarization, TransformerClusteringDiarization
+ from eend.chainer_backend.transformer import NoamScheduler
+ from eend.chainer_backend.updater import GradientAccumulationUpdater
+ from eend.chainer_backend.diarization_dataset import KaldiDiarizationDataset
+@@ -30,6 +30,19 @@
+             'ts': to_device_batch([t for _, t in batch])}
+ 
+ 
++# pht2119
++def get_n_train_speakers(train_set):
++    """
++    Compute the number of speakers in a training set.
++
++    Args:
++        train_set: KaldiDiarizationDataset, the training set
++
++    Returns:
++    int, the number of speakers in the dataset
++    """
++    return len(train_set.data.spk2utt)
++
+ def train(args):
+     """ Training model with chainer backend.
+     This function is called from eend/bin/train.py with
+@@ -104,6 +117,22 @@
+                 n_layers=args.transformer_encoder_n_layers,
+                 dropout=args.transformer_encoder_dropout
+             )
++
++    # pht2119
++    # model creation
++    elif args.model_type == "TransformerClustering":
++        print("Using TransformerClustering")
++        model = TransformerClusteringDiarization(
++            n_speakers=args.num_speakers,
++            n_training_speakers=get_n_train_speakers(train_set),
++            emb_size=args.embeddings_size,
++            in_size=Y.shape[1],
++            lambda_loss=args.lambda_loss,
++            n_units=args.hidden_size,
++            n_heads=args.transformer_encoder_n_heads,
++            n_layers=args.transformer_encoder_n_layers,
++            dropout=args.transformer_encoder_dropout
++        )
+     else:
+         raise ValueError('Possible model_type are "Transformer" and "BLSTM"')
+ 
+diff -ru old/EEND/eend/chainer_backend/utils.py EEND/eend/chainer_backend/utils.py
+--- old/EEND/eend/chainer_backend/utils.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/chainer_backend/utils.py	2021-12-17 20:21:58.189669583 -0500
+@@ -6,8 +6,10 @@
+ import os
+ import chainer
+ import subprocess
+-import cupy
+-
++try:
++    import cupy
++except:
++    print("No CUDA backend.")
+ 
+ def get_free_gpus():
+     """ Get IDs of free GPUs using `nvidia-smi`.
+diff -ru old/EEND/eend/feature.py EEND/eend/feature.py
+--- old/EEND/eend/feature.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/feature.py	2021-12-17 20:19:25.114341965 -0500
+@@ -256,6 +256,8 @@
+          in filtered_segments]).tolist()
+     if n_speakers is None:
+         n_speakers = len(speakers)
++    elif len(speakers) > n_speakers:
++        speakers = speakers[:n_speakers]
+     T = np.zeros((Y.shape[0], n_speakers), dtype=np.int32)
+ 
+     if use_speaker_id:
+Only in EEND/eend: __pycache__
+diff -ru old/EEND/eend/system_info.py EEND/eend/system_info.py
+--- old/EEND/eend/system_info.py	2021-12-17 16:57:06.679743734 -0500
++++ EEND/eend/system_info.py	2021-12-17 20:21:58.189669583 -0500
+@@ -3,15 +3,21 @@
+ 
+ import sys
+ import chainer
+-import cupy
+-import cupy.cuda
+-from cupy.cuda import cudnn
++try:    
++    import cupy
++    import cupy.cuda
++    from cupy.cuda import cudnn
++except:
++    print("Warning, you are running this code without CuPy or CUDA. This is highly untested.")
+ 
+ 
+ def print_system_info():
+     pyver = sys.version.replace('\n', ' ')
+     print(f"python version: {pyver}")
+     print(f"chainer version: {chainer.__version__}")
+-    print(f"cupy version: {cupy.__version__}")
+-    print(f"cuda version: {cupy.cuda.runtime.runtimeGetVersion()}")
+-    print(f"cudnn version: {cudnn.getVersion()}")
++    try:
++        print(f"cupy version: {cupy.__version__}")
++        print(f"cuda version: {cupy.cuda.runtime.runtimeGetVersion()}")
++        print(f"cudnn version: {cudnn.getVersion()}")
++    except:
++        print("No CUDA backend.")
+Only in old/EEND/egs: callhome
+Only in EEND/egs: eend-vector-clustering
+Only in old/EEND/egs: mini_librispeech
+Only in EEND/.git: COMMIT_EDITMSG
+diff -ru old/EEND/.git/config EEND/.git/config
+--- old/EEND/.git/config	2021-12-17 16:57:06.671743771 -0500
++++ EEND/.git/config	2021-12-17 20:21:58.189669583 -0500
+@@ -4,8 +4,20 @@
+ 	bare = false
+ 	logallrefupdates = true
+ [remote "origin"]
+-	url = git@github.com:hitachi-speech/EEND.git
++	url = git@github.com:PierreTsr/EEND.git
+ 	fetch = +refs/heads/*:refs/remotes/origin/*
+-[branch "master"]
++[branch "main"]
+ 	remote = origin
+-	merge = refs/heads/master
++	merge = refs/heads/main
++[branch "todos"]
++	remote = origin
++	merge = refs/heads/todos
++[remote "upstream"]
++	url = git://github.com/hitachi-speech/EEND.git
++	fetch = +refs/heads/*:refs/remotes/upstream/*
++[branch "vector-clustering"]
++	remote = origin
++	merge = refs/heads/vector-clustering
++[branch "cpu_version"]
++	remote = origin
++	merge = refs/heads/cpu_version
+Only in EEND/.git: FETCH_HEAD
+diff -ru old/EEND/.git/HEAD EEND/.git/HEAD
+--- old/EEND/.git/HEAD	2021-12-17 16:57:06.671743771 -0500
++++ EEND/.git/HEAD	2021-12-17 20:21:58.189669583 -0500
+@@ -1 +1 @@
+-ref: refs/heads/master
++ref: refs/heads/cpu_version
+Binary files old/EEND/.git/index and EEND/.git/index differ
+diff -ru old/EEND/.git/logs/HEAD EEND/.git/logs/HEAD
+--- old/EEND/.git/logs/HEAD	2021-12-17 16:57:06.671743771 -0500
++++ EEND/.git/logs/HEAD	2021-12-17 20:21:58.189669583 -0500
+@@ -1 +1,22 @@
+-0000000000000000000000000000000000000000 b851eecd8d7a966487ed3e4ff934a1581a73cc9e Pierre Tessier <pierre.borie.tessier@gmail.com> 1639778226 -0500	clone: from git@github.com:hitachi-speech/EEND.git
++0000000000000000000000000000000000000000 b851eecd8d7a966487ed3e4ff934a1581a73cc9e Pierre Tessier <pierre.borie.tessier@gmail.com> 1638555407 -0500	clone: from git@github.com:PierreTsr/EEND.git
++b851eecd8d7a966487ed3e4ff934a1581a73cc9e 6be1d9e818c9722a504277c5f0174b8bdc708f9b Pierre Tessier <pierre.borie.tessier@gmail.com> 1638555440 -0500	checkout: moving from main to todos
++6be1d9e818c9722a504277c5f0174b8bdc708f9b 6be1d9e818c9722a504277c5f0174b8bdc708f9b Pierre Tessier <pierre.borie.tessier@gmail.com> 1638556048 -0500	checkout: moving from todos to vector-clustering
++6be1d9e818c9722a504277c5f0174b8bdc708f9b 4d2dbf8ee7a8d3a190ca8162e52a039d4822eaa5 Pierre Tessier <pierre.borie.tessier@gmail.com> 1638556403 -0500	commit: integrating changes anterior to the repo
++4d2dbf8ee7a8d3a190ca8162e52a039d4822eaa5 a7c0365b11e4c66e97288abf242b386cd378f9b4 Pierre Tessier <pierre.borie.tessier@gmail.com> 1638569250 -0500	commit: update data simulation
++a7c0365b11e4c66e97288abf242b386cd378f9b4 dcb3d00c35e29b9de6d8ecf02949b40b5e8e8ee4 Pierre Tessier <pierre.borie.tessier@gmail.com> 1638571640 -0500	commit: minor fixes + config changes
++dcb3d00c35e29b9de6d8ecf02949b40b5e8e8ee4 c48585eb52c7a4ef8d3fbe8431d2ce40a48f3ea0 Pierre Tessier <pierre.borie.tessier@gmail.com> 1638932121 -0500	commit: create new model EEND-VC
++c48585eb52c7a4ef8d3fbe8431d2ce40a48f3ea0 34eac9af9d3320bc437e72fd6d310e9e89e669fc Pierre Tessier <pierre.borie.tessier@gmail.com> 1638938783 -0500	commit: add dataset loading scripts
++34eac9af9d3320bc437e72fd6d310e9e89e669fc 8dd354507c492f7ba3b60d61fa4add6ca5b115ad Pierre Tessier <pierre.borie.tessier@gmail.com> 1638982812 -0500	pull: Fast-forward
++8dd354507c492f7ba3b60d61fa4add6ca5b115ad 041724a3990ce19ca7cc29e30f6dc936765c9ef4 Pierre Tessier <pierre.borie.tessier@gmail.com> 1639061683 -0500	commit: final changes
++041724a3990ce19ca7cc29e30f6dc936765c9ef4 7e0bc7a38631e533e83cb24cf4080a0ff9fb62b8 Pierre Tessier <pierre.borie.tessier@gmail.com> 1639061780 -0500	commit: remove mis-added dataset
++7e0bc7a38631e533e83cb24cf4080a0ff9fb62b8 c9dac734280403c34293b50af1fc541b9f8b191a Pierre Tessier <pierre.borie.tessier@gmail.com> 1639061780 -0500	filter-branch: rewrite
++c9dac734280403c34293b50af1fc541b9f8b191a 768095fe64a606baf13060b06b45abfc68e8ce67 Pierre Tessier <pierre.borie.tessier@gmail.com> 1639062251 -0500	commit (merge): Merge branch 'vector-clustering' of github.com:PierreTsr/EEND into vector-clustering
++768095fe64a606baf13060b06b45abfc68e8ce67 bcd53f997895d1611bbefffa567898f7a35f6fa5 Pierre Tessier <pierre.borie.tessier@gmail.com> 1639778558 -0500	commit: fixes before running experiments
++bcd53f997895d1611bbefffa567898f7a35f6fa5 f0ca92493fa39f0cf6aa6df7e6316c110563d08d Pierre Tessier <pierre.borie.tessier@gmail.com> 1639780501 -0500	commit: added id comments
++f0ca92493fa39f0cf6aa6df7e6316c110563d08d 25698f58c407361bd2cfc960cce295ef9282e85f Pierre Tessier <pierre.borie.tessier@gmail.com> 1639784810 -0500	commit: updated comments
++25698f58c407361bd2cfc960cce295ef9282e85f dac92b7ac6c45a25a22d452b7437a21b08f50ce9 Pierre Tessier <pierre.borie.tessier@gmail.com> 1639784909 -0500	commit: add data sample
++dac92b7ac6c45a25a22d452b7437a21b08f50ce9 047babbc7ea7c8ae9e767702febac42a2ae6d94e Pierre Tessier <pierre.borie.tessier@gmail.com> 1639790205 -0500	commit: README update
++047babbc7ea7c8ae9e767702febac42a2ae6d94e b851eecd8d7a966487ed3e4ff934a1581a73cc9e Pierre Tessier <pierre.borie.tessier@gmail.com> 1639790351 -0500	checkout: moving from vector-clustering to main
++b851eecd8d7a966487ed3e4ff934a1581a73cc9e 013a8e92d5a380c0bb205ee178d01dedd442b3e4 Pierre Tessier <pierre.borie.tessier@gmail.com> 1639790365 -0500	pull: Fast-forward
++013a8e92d5a380c0bb205ee178d01dedd442b3e4 bbaf8286f83c05c65c73d2820601a117b8faa382 Pierre Tessier <pierre.borie.tessier@gmail.com> 1639790371 -0500	merge vector-clustering: Merge made by the 'recursive' strategy.
++bbaf8286f83c05c65c73d2820601a117b8faa382 6058d39c4fc9e5a9952ee2556b8db17f29ae5850 Pierre Tessier <pierre.borie.tessier@gmail.com> 1639790518 -0500	checkout: moving from main to cpu_version
+Only in EEND/.git/logs/refs/heads: cpu_version
+Only in EEND/.git/logs/refs/heads: main
+Only in old/EEND/.git/logs/refs/heads: master
+Only in EEND/.git/logs/refs/heads: todos
+Only in EEND/.git/logs/refs/heads: vector-clustering
+Only in EEND/.git/logs/refs/remotes/origin: cpu_version
+diff -ru old/EEND/.git/logs/refs/remotes/origin/HEAD EEND/.git/logs/refs/remotes/origin/HEAD
+--- old/EEND/.git/logs/refs/remotes/origin/HEAD	2021-12-17 16:57:06.671743771 -0500
++++ EEND/.git/logs/refs/remotes/origin/HEAD	2021-12-03 13:16:47.171143216 -0500
+@@ -1 +1 @@
+-0000000000000000000000000000000000000000 b851eecd8d7a966487ed3e4ff934a1581a73cc9e Pierre Tessier <pierre.borie.tessier@gmail.com> 1639778226 -0500	clone: from git@github.com:hitachi-speech/EEND.git
++0000000000000000000000000000000000000000 b851eecd8d7a966487ed3e4ff934a1581a73cc9e Pierre Tessier <pierre.borie.tessier@gmail.com> 1638555407 -0500	clone: from git@github.com:PierreTsr/EEND.git
+Only in EEND/.git/logs/refs/remotes/origin: main
+Only in EEND/.git/logs/refs/remotes/origin: vector-clustering
+Only in EEND/.git/objects: 01
+Only in EEND/.git/objects: 02
+Only in EEND/.git/objects: 03
+Only in EEND/.git/objects: 04
+Only in EEND/.git/objects: 05
+Only in EEND/.git/objects: 06
+Only in EEND/.git/objects: 07
+Only in EEND/.git/objects: 08
+Only in EEND/.git/objects: 09
+Only in EEND/.git/objects: 0a
+Only in EEND/.git/objects: 0c
+Only in EEND/.git/objects: 0d
+Only in EEND/.git/objects: 0f
+Only in EEND/.git/objects: 10
+Only in EEND/.git/objects: 13
+Only in EEND/.git/objects: 18
+Only in EEND/.git/objects: 1a
+Only in EEND/.git/objects: 1b
+Only in EEND/.git/objects: 1f
+Only in EEND/.git/objects: 21
+Only in EEND/.git/objects: 23
+Only in EEND/.git/objects: 25
+Only in EEND/.git/objects: 26
+Only in EEND/.git/objects: 27
+Only in EEND/.git/objects: 29
+Only in EEND/.git/objects: 2a
+Only in EEND/.git/objects: 2c
+Only in EEND/.git/objects: 2e
+Only in EEND/.git/objects: 31
+Only in EEND/.git/objects: 33
+Only in EEND/.git/objects: 34
+Only in EEND/.git/objects: 36
+Only in EEND/.git/objects: 37
+Only in EEND/.git/objects: 39
+Only in EEND/.git/objects: 3a
+Only in EEND/.git/objects: 3e
+Only in EEND/.git/objects: 3f
+Only in EEND/.git/objects: 40
+Only in EEND/.git/objects: 41
+Only in EEND/.git/objects: 42
+Only in EEND/.git/objects: 44
+Only in EEND/.git/objects: 45
+Only in EEND/.git/objects: 46
+Only in EEND/.git/objects: 47
+Only in EEND/.git/objects: 48
+Only in EEND/.git/objects: 49
+Only in EEND/.git/objects: 4b
+Only in EEND/.git/objects: 4c
+Only in EEND/.git/objects: 4d
+Only in EEND/.git/objects: 4f
+Only in EEND/.git/objects: 50
+Only in EEND/.git/objects: 51
+Only in EEND/.git/objects: 52
+Only in EEND/.git/objects: 55
+Only in EEND/.git/objects: 56
+Only in EEND/.git/objects: 59
+Only in EEND/.git/objects: 5b
+Only in EEND/.git/objects: 5c
+Only in EEND/.git/objects: 5f
+Only in EEND/.git/objects: 60
+Only in EEND/.git/objects: 62
+Only in EEND/.git/objects: 64
+Only in EEND/.git/objects: 66
+Only in EEND/.git/objects: 67
+Only in EEND/.git/objects: 68
+Only in EEND/.git/objects: 69
+Only in EEND/.git/objects: 6a
+Only in EEND/.git/objects: 6b
+Only in EEND/.git/objects: 6e
+Only in EEND/.git/objects: 70
+Only in EEND/.git/objects: 71
+Only in EEND/.git/objects: 72
+Only in EEND/.git/objects: 73
+Only in EEND/.git/objects: 75
+Only in EEND/.git/objects: 76
+Only in EEND/.git/objects: 77
+Only in EEND/.git/objects: 78
+Only in EEND/.git/objects: 79
+Only in EEND/.git/objects: 7a
+Only in EEND/.git/objects: 7b
+Only in EEND/.git/objects: 7d
+Only in EEND/.git/objects: 7e
+Only in EEND/.git/objects: 81
+Only in EEND/.git/objects: 82
+Only in EEND/.git/objects: 83
+Only in EEND/.git/objects: 88
+Only in EEND/.git/objects: 89
+Only in EEND/.git/objects: 8b
+Only in EEND/.git/objects: 8c
+Only in EEND/.git/objects: 8d
+Only in EEND/.git/objects: 8f
+Only in EEND/.git/objects: 91
+Only in EEND/.git/objects: 92
+Only in EEND/.git/objects: 93
+Only in EEND/.git/objects: 94
+Only in EEND/.git/objects: 95
+Only in EEND/.git/objects: 96
+Only in EEND/.git/objects: 97
+Only in EEND/.git/objects: 99
+Only in EEND/.git/objects: 9c
+Only in EEND/.git/objects: 9e
+Only in EEND/.git/objects: a1
+Only in EEND/.git/objects: a2
+Only in EEND/.git/objects: a4
+Only in EEND/.git/objects: a5
+Only in EEND/.git/objects: a7
+Only in EEND/.git/objects: a8
+Only in EEND/.git/objects: a9
+Only in EEND/.git/objects: aa
+Only in EEND/.git/objects: ac
+Only in EEND/.git/objects: b0
+Only in EEND/.git/objects: b8
+Only in EEND/.git/objects: bb
+Only in EEND/.git/objects: bc
+Only in EEND/.git/objects: c0
+Only in EEND/.git/objects: c1
+Only in EEND/.git/objects: c2
+Only in EEND/.git/objects: c3
+Only in EEND/.git/objects: c4
+Only in EEND/.git/objects: c6
+Only in EEND/.git/objects: c8
+Only in EEND/.git/objects: c9
+Only in EEND/.git/objects: ca
+Only in EEND/.git/objects: cd
+Only in EEND/.git/objects: ce
+Only in EEND/.git/objects: d2
+Only in EEND/.git/objects: d3
+Only in EEND/.git/objects: d4
+Only in EEND/.git/objects: d5
+Only in EEND/.git/objects: d7
+Only in EEND/.git/objects: d8
+Only in EEND/.git/objects: da
+Only in EEND/.git/objects: db
+Only in EEND/.git/objects: dc
+Only in EEND/.git/objects: dd
+Only in EEND/.git/objects: df
+Only in EEND/.git/objects: e0
+Only in EEND/.git/objects: e2
+Only in EEND/.git/objects: e6
+Only in EEND/.git/objects: e8
+Only in EEND/.git/objects: e9
+Only in EEND/.git/objects: ec
+Only in EEND/.git/objects: ef
+Only in EEND/.git/objects: f0
+Only in EEND/.git/objects: f1
+Only in EEND/.git/objects: f2
+Only in EEND/.git/objects: f3
+Only in EEND/.git/objects: f5
+Only in EEND/.git/objects: f7
+Only in EEND/.git/objects: f9
+Only in EEND/.git/objects: fa
+Only in EEND/.git/objects: fc
+Only in EEND/.git/objects: fd
+Only in EEND/.git/objects: fe
+Only in EEND/.git/objects: ff
+Only in EEND/.git/objects/pack: pack-2a1d12cc465daadad739a9db3c66a2ad33ab0c20.idx
+Only in EEND/.git/objects/pack: pack-2a1d12cc465daadad739a9db3c66a2ad33ab0c20.pack
+Only in old/EEND/.git/objects/pack: pack-2c7c72265571234fc985122c27e934e2b0a5bd12.idx
+Only in old/EEND/.git/objects/pack: pack-2c7c72265571234fc985122c27e934e2b0a5bd12.pack
+Only in EEND/.git: ORIG_HEAD
+diff -ru old/EEND/.git/packed-refs EEND/.git/packed-refs
+--- old/EEND/.git/packed-refs	2021-12-17 16:57:06.671743771 -0500
++++ EEND/.git/packed-refs	2021-12-03 13:16:47.167143230 -0500
+@@ -1,4 +1,5 @@
+ # pack-refs with: peeled fully-peeled sorted 
+ 9a0f211ce7e377eaea242490c3d7ec0f6adab8af refs/remotes/origin/initial_release
+-b851eecd8d7a966487ed3e4ff934a1581a73cc9e refs/remotes/origin/master
++b851eecd8d7a966487ed3e4ff934a1581a73cc9e refs/remotes/origin/main
++6be1d9e818c9722a504277c5f0174b8bdc708f9b refs/remotes/origin/todos
+ 9a0f211ce7e377eaea242490c3d7ec0f6adab8af refs/tags/v0.1.0
+Only in EEND/.git/refs/heads: cpu_version
+Only in EEND/.git/refs/heads: main
+Only in old/EEND/.git/refs/heads: master
+Only in EEND/.git/refs/heads: todos
+Only in EEND/.git/refs/heads: vector-clustering
+Only in EEND/.git/refs: original
+Only in EEND/.git/refs/remotes/origin: cpu_version
+diff -ru old/EEND/.git/refs/remotes/origin/HEAD EEND/.git/refs/remotes/origin/HEAD
+--- old/EEND/.git/refs/remotes/origin/HEAD	2021-12-17 16:57:06.671743771 -0500
++++ EEND/.git/refs/remotes/origin/HEAD	2021-12-03 13:16:47.171143216 -0500
+@@ -1 +1 @@
+-ref: refs/remotes/origin/master
++ref: refs/remotes/origin/main
+Only in EEND/.git/refs/remotes/origin: main
+Only in EEND/.git/refs/remotes/origin: vector-clustering
+diff -ru old/EEND/.gitignore EEND/.gitignore
+--- old/EEND/.gitignore	2021-12-17 16:57:06.679743734 -0500
++++ EEND/.gitignore	2021-12-17 20:19:25.086342087 -0500
+@@ -113,3 +113,15 @@
+ 
+ # mypy
+ .mypy_cache/
++
++# PyCharm config files
++.idea/
++
++# corpora
++*amicorpus/
++*simulated_rirs_8k/
++*musan/
++*LibriSpeech/
++*chime5/
++*.tar.gz
++*.tar
+\ No newline at end of file
+Only in EEND: .idea
+Only in EEND: README.txt
+Only in EEND/tools: env.sh
+Only in EEND/tools: kaldi
+diff -ru old/EEND/tools/Makefile EEND/tools/Makefile
+--- old/EEND/tools/Makefile	2021-12-17 16:57:06.739743476 -0500
++++ EEND/tools/Makefile	2021-12-17 20:21:58.189669583 -0500
+@@ -33,7 +33,11 @@
+ miniconda3/envs/eend/bin: miniconda3
+ 	miniconda3/bin/conda update -y conda
+ 	miniconda3/bin/conda env create -f environment.yml
+-	miniconda3/envs/eend/bin/pip install cupy-cuda$(subst .,,$(CUDA_VERSION))==6.2.0 chainer==6.2.0
++	# pht2119
++	# I had to fix some CUDA compatibility issues there
++	# miniconda3/envs/eend/bin/pip install cupy-cuda114==9.6.0 chainer==7.8.0
++	# this one is for a setup without GPU
++	miniconda3/envs/eend/bin/pip install chainer==7.8.0
+ update:
+ 	miniconda3/bin/conda env update -f environment.yml
+ 
+Only in EEND/tools: miniconda3
+Only in EEND/tools: miniconda3.sh

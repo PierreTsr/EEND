@@ -15,6 +15,7 @@ All the paths are considered from the project root:
 - tools/ contains the recipes to build the environement
 - utils/ is a single script to output the best diarization score (not very useful)
 - egs/eend-vector-clustering/v1 is a Kaldi style egs to run the project
+- EEND_tessier.diff contains the diff file with the original repository
 
 I identified all my contributions with 
 # pht2119

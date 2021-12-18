@@ -38,7 +38,12 @@ From the project root, run:
 $ cd tools
 $ make KALDI=<path_to_kaldi_root>
 Warning: the Makefile WILL try to build kaldi if the path to Kaldi's root is not provided.
-If the Makefile doesn't end with a success message (it doesn't always raise an error when failing), delete the created files in tools/ and rerun after fixing the failing part.
+Warning: If the Makefile doesn't end with 
+"echo "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" >> env.sh"
+(it doesn't always raise an error when failing), delete the created files in tools/ and rerun after fixing the failing part.
+
+Activate the Python environement from the project root with:
+$ source tools/miniconda3/bin/activate eend
 
 Once the setup is done, to run the inference, from egs/eend-vector-clustering/v1/ run:
 $ ./run.sh

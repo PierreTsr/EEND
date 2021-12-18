@@ -129,7 +129,6 @@ if [ $stage -le 3 ]; then
             -c $infer_config \
             $infer_args \
             $dset \
-            --train_dir $train_set \
             $model_dir/$ave_id.nnet.npz \
             $infer_dir/$dset \
             || exit 1

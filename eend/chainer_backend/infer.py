@@ -31,8 +31,10 @@ def _gen_chunk_indices(data_len, chunk_size):
 
 
 # pht2119
-def get_n_train_speakers(train_set):
-    return len(train_set.data.spk2utt)
+# return the number of speakers during training
+def get_n_train_speakers(model_file):
+    training_embeddings = np.load(model_file)["training_head/training_emb"]
+    return training_embeddings.shape[0]
 
 
 def infer(args):
@@ -43,21 +45,6 @@ def infer(args):
         args.frame_size,
         args.context_size,
         args.input_transform)
-
-    # pht2119
-    train_set = KaldiDiarizationDataset(
-        args.train_dir,
-        chunk_size=args.chunk_size,
-        context_size=args.context_size,
-        input_transform=args.input_transform,
-        frame_size=args.frame_size,
-        frame_shift=args.frame_shift,
-        subsampling=args.subsampling,
-        rate=args.sampling_rate,
-        use_last_samples=True,
-        n_speakers=args.num_speakers,
-        shuffle=args.shuffle,
-    )
 
     if args.model_type == "BLSTM":
         model = BLSTMDiarization(
@@ -93,7 +80,7 @@ def infer(args):
         print("Using TransformerClustering")
         model = TransformerClusteringDiarization(
             n_speakers=args.num_speakers,
-            n_training_speakers=get_n_train_speakers(train_set),
+            n_training_speakers=get_n_train_speakers(args.model_file),
             emb_size=args.embedding_size,
             in_size=in_size,
             lambda_loss=args.lambda_loss,
@@ -107,6 +94,7 @@ def infer(args):
 
     serializers.load_npz(args.model_file, model)
 
+    print(args)
     if args.gpu >= 0:
         gpuid = use_single_gpu()
         model.to_gpu()

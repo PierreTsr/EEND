@@ -11,8 +11,6 @@ parser.add_argument('-c', '--config', help='config file path',
                     action=yamlargparse.ActionConfigFile)
 parser.add_argument('data_dir',
                     help='kaldi-style data dir')
-parser.add_argument('--train_dir',
-                    help='kaldi-style data dir used for training.')
 parser.add_argument('model_file',
                     help='best.nnet')
 parser.add_argument('out_dir',

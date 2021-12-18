@@ -14,4 +14,4 @@ lambda_loss: 0.01
 chunk_size: 500
 transformer_encoder_n_heads: 4
 transformer_encoder_n_layers: 2
-gpu: 0
+gpu: -1

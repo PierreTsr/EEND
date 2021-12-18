@@ -6,8 +6,10 @@
 import os
 import chainer
 import subprocess
-import cupy
-
+try:
+    import cupy
+except:
+    print("No CUDA backend.")
 
 def get_free_gpus():
     """ Get IDs of free GPUs using `nvidia-smi`.

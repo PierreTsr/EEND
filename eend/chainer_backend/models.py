@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import numpy as np
-import cupy
 import chainer
 import chainer.functions as F
 import chainer.links as L
@@ -414,13 +413,13 @@ def clusterize_predict(activation, embeddings):
                                          linkage="complete",
                                          distance_threshold=max_dist.item())
     # labels: (B, S)
-    labels = clustering.fit_predict(distances.array.get()).reshape((batch_size, n_speaker))
+    labels = clustering.fit_predict(distances.array).reshape((batch_size, n_speaker))
     n_tot_speakers = np.max(labels) + 1
     tot_length = sum(len(y) for y in activation)
     predictions = np.zeros((tot_length, n_tot_speakers), dtype="float32")
     for i, y in enumerate(activation):
         offset = len(activation[0]) * i
-        predictions[offset:(offset + len(y)), labels[i]] = y.array.get()
+        predictions[offset:(offset + len(y)), labels[i]] = y.array
     return predictions
 
 
